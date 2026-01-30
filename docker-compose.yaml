@@ -1,0 +1,50 @@
+services:
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka-server
+    ports:
+      - "9092:9092"
+    environment:
+      # KRaft
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: "broker,controller"
+
+      # cái này Confluent dùng voters, không dùng bootstrap_servers
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka-server:9093"
+
+      # listeners
+      KAFKA_LISTENERS: "PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://localhost:9092"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+
+      # required for KRaft
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+
+      # single node
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+
+      # optional
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_MESSAGE_MAX_BYTES: 10485760
+      KAFKA_REPLICA_FETCH_MAX_BYTES: 10485760
+      KAFKA_SOCKET_REQUEST_MAX_BYTES: 10485760
+
+# Chỉ lưu message trong 5 phút (300,000 ms)
+      KAFKA_LOG_RETENTION_MS: 300000
+      # Chỉ lưu tối đa 1GB log toàn cục
+      KAFKA_LOG_RETENTION_BYTES: 1073741824
+      # Kích thước mỗi file log segment (256MB)
+      KAFKA_LOG_SEGMENT_BYTES: 268435456
+      # Tần suất kiểm tra để xóa file cũ (mỗi 1 phút)
+      KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: 60000
+
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+
+volumes:
+  kafka_data:

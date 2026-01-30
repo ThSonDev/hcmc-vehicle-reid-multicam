@@ -1,0 +1,5 @@
+{
+    "python.analysis.extraPaths": [
+        "./osnet/deep-person-reid"
+    ]
+}

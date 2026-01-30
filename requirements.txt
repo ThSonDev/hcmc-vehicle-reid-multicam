@@ -1,0 +1,13 @@
+torch==2.3.0
+numpy==1.26.4
+scikit-learn==1.4.2
+pandas==2.2.2
+pyspark==3.5.1
+tqdm==4.67.1
+confluent-kafka==2.4.0
+opencv-python==4.10.0.84
+ultralytics==8.2.10
+Cython==3.2.4
+gdown==5.2.1
+tensorboard==2.20.0
+defusedxml==0.7.1

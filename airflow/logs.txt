@@ -1,0 +1,91 @@
+➜  airflow docker compose build --no-cache
+WARN[0000] /mnt/Kioxia/Code/hcmc-vehicle-reid-multicam/airflow/docker-compose.yaml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion
+[+] Building 537.8s (13/13) FINISHED
+ => [internal] load local bake definitions                                                                         0.0s
+ => => reading from stdin 1.68kB                                                                                   0.0s
+ => [airflow-scheduler internal] load build definition from Dockerfile                                             0.0s
+ => => transferring dockerfile: 659B                                                                               0.0s
+ => [airflow-init internal] load metadata for docker.io/apache/airflow:2.9.0                                       4.6s
+ => [airflow-webserver internal] load .dockerignore                                                                0.0s
+ => => transferring context: 2B                                                                                    0.0s
+ => [airflow-init internal] load build context                                                                     0.1s
+ => => transferring context: 363B                                                                                  0.0s
+ => [airflow-init 1/5] FROM docker.io/apache/airflow:2.9.0@sha256:2b0695195cf0cedd02a8d71401750a7739f3f10e82ee7b  19.3s
+ => => resolve docker.io/apache/airflow:2.9.0@sha256:2b0695195cf0cedd02a8d71401750a7739f3f10e82ee7b5a4e3fbd9a1945  0.0s
+ => => sha256:4f4fb700ef54461cfa02571ae0db9a0dc1e0cdb5577484a6d75e68dc38e8acc1 32B / 32B                           0.4s
+ => => sha256:c59a3f23a88afc92de29166a10202f459a3225ee698083d909fef77f8cbf3a0d 421B / 421B                         0.7s
+ => => sha256:8c747dc64f8b4a7c0a2ac9c5f3858d93d4ce73bff163640a6e4007b19ab100ef 422B / 422B                         0.9s
+ => => sha256:dc8db3d6bd5701d8c6a377cbab181c227b8cd5dc7b75b2a9684821c5d649f4fd 114B / 114B                         0.9s
+ => => sha256:eab83d23c27102f9659d6560c766604cf109a45159922b896826da07a075818f 1.06kB / 1.06kB                     1.5s
+ => => sha256:d38aee0acc448160c34a5e693be7f05b5c57be439b35fe18a90599478f18a5c1 5.21kB / 5.21kB                     0.4s
+ => => sha256:ecf0ed4149f49f8599be68ac16b2b2d797de1392811cf25315d419a6dc31f1df 292B / 292B                         0.4s
+ => => sha256:bc4c08aa86dafb870774ac07aa8c39c228748279c36f0111a48d416f2298eca5 492B / 492B                         0.4s
+ => => sha256:6e28b9600e5291d3f94bf7666ad5a901d93f7e0b48f114e6c55719a8b065c34c 3.87kB / 3.87kB                     1.0s
+ => => sha256:a06ebbb7e68ad405fd8f39f044b734527d037d7c9abccfda04d086619f948dab 18.43kB / 18.43kB                   0.4s
+ => => sha256:8fc579358869afe6970771e00f49e88e21b5857d285a5233aabfec1fc7a8be01 6.75kB / 6.75kB                    16.4s
+ => => sha256:c0227c3c764129acea7987054065a5db80398a7f9acefdc0c9fa59206ac10bc8 243.70MB / 243.70MB                 8.0s
+ => => sha256:19820ef87d184237ceda874f66db2e600504b3316ecb7a32dcc43b82e94ed9f1 24.63MB / 24.63MB                   4.8s
+ => => sha256:da8b0849ee9fac146ed2b59e76f7c31487af56a983eddd57d193b54ee0f76cc6 2.03kB / 2.03kB                     0.4s
+ => => sha256:e35ae462d5c993d3989665b47ff81788b3eca62df61af962482836269e24c156 2.27kB / 2.27kB                     0.4s
+ => => sha256:6e3c288bea4261a666451728fb6abc5bee51a1b54550d60a12b4151c99b82995 87.37MB / 87.37MB                   5.4s
+ => => sha256:f012c368bf3a015d289825f5dbbbd9f989322738a3e2a8fa673471c7aa6df52c 1.67kB / 1.67kB                     1.1s
+ => => sha256:a47354887c310a4b86f2eec46704051aa91513f71ef42a44dcedeea84062c163 2.98MB / 2.98MB                     0.5s
+ => => sha256:c529235f83c86ca0fb587777a0c0180058e05e0b37f760212ff224a20d83a9b8 245B / 245B                         0.4s
+ => => sha256:e71929d491677492d7a4ad57a7fa341553306ea7568c09e4231dcc509dd00ae9 11.99MB / 11.99MB                   1.4s
+ => => sha256:1103112ebfc46e01c0f35f3586e5a39c6a9ffa32c1a362d4d5f20e3783c6fdd7 3.51MB / 3.51MB                     0.9s
+ => => sha256:8a1e25ce7c4f75e372e9884f8f7b1bedcfe4a7a7d452eb4b0a1c7477c9a90345 29.12MB / 29.12MB                   0.9s
+ => => extracting sha256:8a1e25ce7c4f75e372e9884f8f7b1bedcfe4a7a7d452eb4b0a1c7477c9a90345                          0.4s
+ => => extracting sha256:1103112ebfc46e01c0f35f3586e5a39c6a9ffa32c1a362d4d5f20e3783c6fdd7                          0.1s
+ => => extracting sha256:e71929d491677492d7a4ad57a7fa341553306ea7568c09e4231dcc509dd00ae9                          0.2s
+ => => extracting sha256:c529235f83c86ca0fb587777a0c0180058e05e0b37f760212ff224a20d83a9b8                          0.0s
+ => => extracting sha256:a47354887c310a4b86f2eec46704051aa91513f71ef42a44dcedeea84062c163                          0.1s
+ => => extracting sha256:f012c368bf3a015d289825f5dbbbd9f989322738a3e2a8fa673471c7aa6df52c                          0.0s
+ => => extracting sha256:6e3c288bea4261a666451728fb6abc5bee51a1b54550d60a12b4151c99b82995                          0.8s
+ => => extracting sha256:e35ae462d5c993d3989665b47ff81788b3eca62df61af962482836269e24c156                          0.0s
+ => => extracting sha256:da8b0849ee9fac146ed2b59e76f7c31487af56a983eddd57d193b54ee0f76cc6                          0.0s
+ => => extracting sha256:19820ef87d184237ceda874f66db2e600504b3316ecb7a32dcc43b82e94ed9f1                          0.3s
+ => => extracting sha256:c0227c3c764129acea7987054065a5db80398a7f9acefdc0c9fa59206ac10bc8                          4.3s
+ => => extracting sha256:8fc579358869afe6970771e00f49e88e21b5857d285a5233aabfec1fc7a8be01                          0.2s
+ => => extracting sha256:a06ebbb7e68ad405fd8f39f044b734527d037d7c9abccfda04d086619f948dab                          0.1s
+ => => extracting sha256:6e28b9600e5291d3f94bf7666ad5a901d93f7e0b48f114e6c55719a8b065c34c                          0.2s
+ => => extracting sha256:bc4c08aa86dafb870774ac07aa8c39c228748279c36f0111a48d416f2298eca5                          0.2s
+ => => extracting sha256:ecf0ed4149f49f8599be68ac16b2b2d797de1392811cf25315d419a6dc31f1df                          0.1s
+ => => extracting sha256:d38aee0acc448160c34a5e693be7f05b5c57be439b35fe18a90599478f18a5c1                          0.2s
+ => => extracting sha256:eab83d23c27102f9659d6560c766604cf109a45159922b896826da07a075818f                          0.0s
+ => => extracting sha256:dc8db3d6bd5701d8c6a377cbab181c227b8cd5dc7b75b2a9684821c5d649f4fd                          0.0s
+ => => extracting sha256:8c747dc64f8b4a7c0a2ac9c5f3858d93d4ce73bff163640a6e4007b19ab100ef                          0.0s
+ => => extracting sha256:c59a3f23a88afc92de29166a10202f459a3225ee698083d909fef77f8cbf3a0d                          0.0s
+ => => extracting sha256:4f4fb700ef54461cfa02571ae0db9a0dc1e0cdb5577484a6d75e68dc38e8acc1                          0.0s
+ => [airflow-scheduler 2/5] RUN apt-get update && apt-get install -y --no-install-recommends openjdk-17-jre-head  15.0s
+ => [airflow-scheduler 3/5] COPY requirements.txt /tmp/requirements.txt                                            0.1s
+ => [airflow-init 4/5] RUN pip install --no-cache-dir --default-timeout=100 -r /tmp/requirements.txt             265.8s
+ => [airflow-webserver 5/5] RUN apt-get update && apt-get install -y libgl1-mesa-glx libglib2.0-0 && apt-get cle  58.8s
+ => CANCELED [airflow-scheduler] exporting to image                                                              174.0s
+ => => exporting layers                                                                                          173.6s
+ => => exporting manifest sha256:100e35f72f6be366a94e8ab1ddfac89b28bebacc539cfbcb9c28b38085c96ecd                  0.0s
+ => => exporting config sha256:b80967d830fb20af552da37c10cd41d4350a54a16fa765dc709cdb95a1ef0d09                    0.0s
+ => => exporting attestation manifest sha256:5c6afbf2a30c2d064b6fb34afa4d2d9b6f0c7886dbc45f8d18d2be195281faf9      0.1s
+ => => exporting manifest list sha256:788078988b9760fccd14ac3ba52728f6664ac060f0c8cd66239c93652d70c914             0.0s
+ => => naming to docker.io/library/airflow-base:2.9.0-custom                                                       0.0s
+ => => unpacking to docker.io/library/airflow-base:2.9.0-custom                                                    0.1s
+ => CANCELED [airflow-init] exporting to image                                                                   174.0s
+ => => exporting layers                                                                                          173.6s
+ => => exporting manifest sha256:99a81f9c25f54f4f25c67363197da58fc6cc5fb7c3465a122c8fbf24bcbce726                  0.0s
+ => => exporting config sha256:219ed58db536a37efd5f43901997c91fa3b45568b01f8be1325134cbc3b71ed8                    0.0s
+ => => exporting attestation manifest sha256:c3113029b890cb56390dcb4f80822b4e54e807f3169ff4577ee3d856568ac76f      0.1s
+ => => exporting manifest list sha256:63842767f88ee45f9bf39e6e733b8f6f213b3a541fdab8eb40b761c7a31a5109             0.0s
+ => => naming to docker.io/library/airflow-base:2.9.0-custom                                                       0.0s
+ => => unpacking to docker.io/library/airflow-base:2.9.0-custom                                                    0.1s
+ => ERROR [airflow-webserver] exporting to image                                                                 173.8s
+ => => exporting layers                                                                                          173.5s
+ => => exporting manifest sha256:f3b355ab96650744e0ca3b5411cb38cfd15810ff0878d97e0d7206871485326b                  0.0s
+ => => exporting config sha256:92f648b264f0f75da6b9d571d32e4e44f5ab8826c28c593996c181973b73b664                    0.0s
+ => => exporting attestation manifest sha256:1ca8c657d930f6b3ce956a084a0644c0e9860a81de7f30599de2114d7d91c712      0.1s
+ => => exporting manifest list sha256:496fc7349f9a94ffa53293d42a7a80c95cd535b6c3b559cc6365649725625b07             0.0s
+ => => naming to docker.io/library/airflow-base:2.9.0-custom                                                       0.0s
+------
+ > [airflow-webserver] exporting to image:
+------
+[+] build 0/1
+ ⠙ Image airflow-base:2.9.0-custom Building                                                                      537.9s
+target airflow-webserver: failed to solve: image "docker.io/library/airflow-base:2.9.0-custom": already exists
