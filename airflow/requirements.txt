@@ -4,6 +4,17 @@ scikit-learn==1.4.2
 pandas==2.2.2
 pyspark==3.5.1
 tqdm==4.67.1
+confluent-kafka==2.4.0
+opencv-python-headless==4.10.0.84
+ultralytics==8.2.10
+
+scipy==1.13.1
+Cython==3.2.4
+gdown==5.2.1
+tensorboard==2.20.0
+defusedxml==0.7.1
+dill==0.4.1
+
 requests==2.31.0
 streamlit==1.39.0
 streamlit-autorefresh==1.0.1
@@ -12,6 +23,3 @@ psycopg2-binary==2.9.9
 plotly==5.24.1
 wordcloud==1.9.3
 pillow==10.4.0
-confluent-kafka==2.4.0
-opencv-python-headless==4.10.0.84
-ultralytics==8.2.10

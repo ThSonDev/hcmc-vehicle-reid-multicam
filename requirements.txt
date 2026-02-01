@@ -7,7 +7,10 @@ tqdm==4.67.1
 confluent-kafka==2.4.0
 opencv-python==4.10.0.84
 ultralytics==8.2.10
+
+scipy==1.13.1
 Cython==3.2.4
 gdown==5.2.1
 tensorboard==2.20.0
 defusedxml==0.7.1
+dill==0.4.1

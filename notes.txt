@@ -1,5 +1,0 @@
-# Build
-docker compose build airflow-webserver
-
-# Up
-docker compose up -d
