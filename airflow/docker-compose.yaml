@@ -141,6 +141,11 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_HEAP_OPTS: "-Xmx512M -Xms512M"
+      KAFKA_LOG_RETENTION_MS: 90000
+      KAFKA_LOG_RETENTION_BYTES: 536870912
+      KAFKA_LOG_SEGMENT_BYTES: 16777216
+      KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: 30000
     depends_on:
       - zookeeper
     restart: unless-stopped
@@ -150,7 +155,7 @@ services:
     image: airflow-base:2.9.0-custom
     container_name: streamlit
     # Use same image with Airflow to take advantage cache
-    entrypoint: ["bash", "-c", "streamlit run /opt/airflow/projects/absa_streaming/streamlit/streamlit_app.py --server.port 8501 --server.address 0.0.0.0"]
+    entrypoint: ["bash", "-c", "streamlit run /opt/airflow/projects/vehicle-reid-multicam/streamlit/streamlit_app.py --server.port 8501 --server.address 0.0.0.0"]
     ports:
       - "8501:8501"
     volumes:
