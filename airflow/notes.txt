@@ -22,3 +22,24 @@ docker run --rm --gpus all nvidia/cuda:12.3.2-base-ubuntu22.04 nvidia-smi
 
 # Logs
 docker compose logs -f airflow-scheduler
+
+docker exec -u 0 -it airflow-airflow-scheduler-1 bash -c '
+mkdir -p /home/airflow/.local/lib/python3.9/site-packages/pyspark/jars && \
+cd /home/airflow/.local/lib/python3.9/site-packages/pyspark/jars && \
+echo "Downloading Libraries..." && \
+curl -L -O https://repo1.maven.org/maven2/org/apache/spark/spark-sql-kafka-0-10_2.12/3.5.1/spark-sql-kafka-0-10_2.12-3.5.1.jar && \
+curl -L -O https://repo1.maven.org/maven2/org/apache/spark/spark-token-provider-kafka-0-10_2.12/3.5.1/spark-token-provider-kafka-0-10_2.12-3.5.1.jar && \
+curl -L -O https://repo1.maven.org/maven2/org/apache/kafka/kafka-clients/3.4.1/kafka-clients-3.4.1.jar && \
+curl -L -O https://repo1.maven.org/maven2/org/apache/commons/commons-pool2/2.11.1/commons-pool2-2.11.1.jar && \
+chown -R airflow:0 /home/airflow/.local/lib/python3.9/site-packages/pyspark/jars && \
+echo "Xong! Thư viện đã sẵn sàng cho Scheduler."
+'
+docker exec -it kafka kafka-topics --create --topic video_reid_stream --bootstrap-server localhost:9092 --partitions 3 --replication-factor 1
+
+
+docker exec -it airflow-postgres-1 psql -U airflow -d airflow -c "TRUNCATE vehicle_matches, vehicle_tracks CASCADE;"
+rm -rf projects/vehicle-reid-multicam/static/*
+docker exec -it kafka kafka-topics --delete --topic video_reid_stream --bootstrap-server localhost:9092
+
+# Tạo lại topic mới
+docker exec -it kafka kafka-topics --create --topic video_reid_stream --bootstrap-server localhost:9092 --partitions 3 --replication-factor 1

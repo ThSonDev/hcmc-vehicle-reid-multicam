@@ -15,7 +15,7 @@ DEFAULT_CONF = {
     "TARGET_WIDTH": "640",
     "JPEG_QUALITY": "70",
     "KAFKA_BROKER": "kafka:9092",
-    "RUN_DURATION": "60" # Chạy 5 phút rồi tự tắt để tránh treo task mãi mãi
+    "RUN_DURATION": "120" # Chạy 5 phút rồi tự tắt để tránh treo task mãi mãi
 }
 
 def check_video_paths(**kwargs):

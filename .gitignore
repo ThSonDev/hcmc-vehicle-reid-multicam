@@ -20,3 +20,7 @@ __pycache__
 airflow/logs
 airflow/projects/vehicle-reid-multicam/data
 airflow/models
+airflow/static
+
+temp_eval_data
+results

@@ -36,3 +36,14 @@ USER root
 
 # Graphics libs for OpenCV Yolo
 RUN apt-get update && apt-get install -y libgl1-mesa-glx libglib2.0-0 && apt-get clean
+
+USER root
+WORKDIR /home/airflow/.local/lib/python3.9/site-packages/pyspark/jars
+RUN curl -L -O https://repo1.maven.org/maven2/org/apache/spark/spark-sql-kafka-0-10_2.12/3.5.1/spark-sql-kafka-0-10_2.12-3.5.1.jar && \
+    curl -L -O https://repo1.maven.org/maven2/org/apache/spark/spark-token-provider-kafka-0-10_2.12/3.5.1/spark-token-provider-kafka-0-10_2.12-3.5.1.jar && \
+    curl -L -O https://repo1.maven.org/maven2/org/apache/kafka/kafka-clients/3.4.1/kafka-clients-3.4.1.jar && \
+    curl -L -O https://repo1.maven.org/maven2/org/apache/commons/commons-pool2/2.11.1/commons-pool2-2.11.1.jar
+
+RUN chown -R airflow:0 /home/airflow/.local/lib/python3.9/site-packages/pyspark/jars
+USER airflow
+WORKDIR /opt/airflow

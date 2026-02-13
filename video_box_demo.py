@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 
 VIDEO_PATH = r"./data/cam1_half.mp4"  # change this
-MOT_PATH = r"gt_cam1.txt"  # change this
+MOT_PATH = r"./output_cam1/gt.txt"  # change this
 # Optional — class names based on your class_id mapping
 CLASS_NAMES = {
     1: "car",

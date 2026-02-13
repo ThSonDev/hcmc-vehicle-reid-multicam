@@ -166,3 +166,51 @@ class FeatureExtractor:
             norm = features.norm(p=2, dim=1, keepdim=True)
             features = features.div(norm.expand_as(features))
         return features.cpu().numpy()
+    
+
+class MOTResultWriter:
+    def __init__(self, output_path, target_width=None, original_width=None, original_height=None):
+        """
+        Ghi kết quả tracking ra file chuẩn MOTChallenge.
+        Format: <frame>, <id>, <bb_left>, <bb_top>, <bb_width>, <bb_height>, <conf>, -1, -1, -1
+        """
+        os.makedirs(os.path.dirname(output_path), exist_ok=True) 
+        
+        self.file = open(output_path, 'w')
+        self.output_path = output_path
+        self.file = open(output_path, 'w')
+        
+        # Tính toán scale factor nếu chạy resize
+        self.scale_x = 1.0
+        self.scale_y = 1.0
+        
+        if target_width and original_width and original_height:
+            # Giả sử giữ aspect ratio khi resize
+            target_height = int(original_height * (target_width / original_width))
+            self.scale_x = original_width / target_width
+            self.scale_y = original_height / target_height
+            print(f"[ResultWriter] Scaling coords by X:{self.scale_x:.2f}, Y:{self.scale_y:.2f}")
+
+    def write(self, frame_idx, track_id, xyxy, conf=1.0):
+        """
+        frame_idx: int (1-based)
+        xyxy: [x1, y1, x2, y2]
+        """
+        x1, y1, x2, y2 = xyxy
+        
+        # Scale về độ phân giải gốc của GT
+        x1 *= self.scale_x
+        y1 *= self.scale_y
+        x2 *= self.scale_x
+        y2 *= self.scale_y
+        
+        w = x2 - x1
+        h = y2 - y1
+        
+        # Format chuẩn MOT: frame, id, left, top, w, h, conf, -1, -1, -1
+        line = f"{int(frame_idx)},{int(track_id)},{x1:.2f},{y1:.2f},{w:.2f},{h:.2f},{conf:.2f},-1,-1,-1\n"
+        self.file.write(line)
+        self.file.flush() # Ghi ngay lập tức
+
+    def close(self):
+        self.file.close()

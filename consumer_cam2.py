@@ -34,6 +34,13 @@ def run_cam2():
     consumer = utils.get_kafka_consumer(BROKER, GROUP_ID, [TOPIC_VIDEO, TOPIC_GALLERY])
     producer = utils.get_kafka_producer(BROKER)
 
+    res_writer = utils.MOTResultWriter(
+        output_path="results/res_cam2.txt",  # Đổi thành res_cam2.txt cho Cam 2
+        target_width=None, # Producer không resize
+        original_width=1920, 
+        original_height=1080
+    )
+
     tracker = sv.ByteTrack(track_activation_threshold=0.2, lost_track_buffer=60, frame_rate=30)
     box_an = sv.BoxAnnotator(thickness=2)
 
@@ -74,11 +81,22 @@ def run_cam2():
                 ts_now = meta.get('timestamp', ts_now)
             except: pass
 
+            kafka_frame_idx = frame_count 
+            try:
+                if msg.headers():
+                    meta = json.loads(msg.headers()[0][1].decode())
+                    # Producer gửi frame_idx bắt đầu từ 0, GT thường bắt đầu từ 1
+                    kafka_frame_idx = meta.get('original_frame_idx', frame_count) + 1
+            except: pass
+
             if frame_count % 3 == 0:
                 results = model(frame, verbose=False, conf=0.5)[0]
                 detections = sv.Detections.from_ultralytics(results)
                 detections = utils.merge_truck_boxes(detections, frame.shape)
                 detections = tracker.update_with_detections(detections)
+
+                for xyxy, tid, conf in zip(detections.xyxy, detections.tracker_id, detections.confidence):
+                    res_writer.write(kafka_frame_idx, tid, xyxy, conf)
 
                 # Logic Match
                 query_crops, query_indices = [], []

@@ -35,6 +35,13 @@ def run_cam1():
         print(f"[ERROR] Kiểm tra lại đường dẫn model: {YOLO_MODEL_PATH}")
         return
 
+    res_writer = utils.MOTResultWriter(
+        output_path="results/res_cam1.txt", 
+        target_width=None, # Hoặc 640 nếu Producer config 640
+        original_width=1920, 
+        original_height=1080
+    )
+
     # Init Tracker
     tracker = sv.ByteTrack(
         track_activation_threshold=TRACK_THRESH,
@@ -86,6 +93,14 @@ def run_cam1():
 
         detections_display = None
 
+        kafka_frame_idx = frame_count 
+        try:
+            if msg.headers():
+                meta = json.loads(msg.headers()[0][1].decode())
+                # Producer gửi frame_idx bắt đầu từ 0, GT thường bắt đầu từ 1
+                kafka_frame_idx = meta.get('original_frame_idx', frame_count) + 1
+        except: pass
+
         if frame_count % (SKIP_FRAMES + 1) == 0:
             results = model(frame, verbose=False, conf=YOLO_CONF)[0]
             detections = sv.Detections.from_ultralytics(results)
@@ -94,6 +109,9 @@ def run_cam1():
             detections = utils.merge_truck_boxes(detections, frame.shape)
             detections = tracker.update_with_detections(detections)
             detections_display = detections
+
+            for xyxy, tid, conf in zip(detections.xyxy, detections.tracker_id, detections.confidence):
+                res_writer.write(kafka_frame_idx, tid, xyxy, conf)
 
             # Chuẩn bị crop
             crops = []

@@ -40,6 +40,13 @@ def run_cam3():
     consumer = utils.get_kafka_consumer(BROKER, GROUP_ID, [TOPIC_VIDEO, TOPIC_GALLERY])
     producer = utils.get_kafka_producer(BROKER)
 
+    res_writer = utils.MOTResultWriter(
+        output_path="results/res_cam3.txt", 
+        target_width=None, 
+        original_width=1440, # Độ phân giải gốc khác
+        original_height=1080
+    )
+
     tracker = sv.ByteTrack(track_activation_threshold=0.2, lost_track_buffer=60, frame_rate=30)
     box_an = sv.BoxAnnotator(thickness=2)
 
@@ -84,6 +91,12 @@ def run_cam3():
             if frame is None: continue
             
             frame_count += 1
+            kafka_frame_idx = frame_count
+            try:
+                meta = json.loads(msg.headers()[0][1].decode())
+                kafka_frame_idx = meta.get('frame_idx', frame_count) + 1
+            except: pass
+
             ts_now = time.time()
             try:
                 meta = json.loads(msg.headers()[0][1].decode())
@@ -96,6 +109,10 @@ def run_cam3():
                 detections = sv.Detections.from_ultralytics(results)
                 detections = utils.merge_truck_boxes(detections, frame.shape)
                 detections = tracker.update_with_detections(detections)
+
+                confs = detections.confidence if detections.confidence is not None else [1.0]*len(detections)
+                for xyxy, tid, conf in zip(detections.xyxy, detections.tracker_id, confs):
+                    res_writer.write(kafka_frame_idx, tid, xyxy, conf)
 
                 # Tập hợp các ID đang xuất hiện trong khung hình này
                 current_frame_tids = set()

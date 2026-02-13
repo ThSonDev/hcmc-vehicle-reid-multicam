@@ -9,10 +9,10 @@ print(">>> Đã kết nối với torchreid thành công!")
 # Trỏ trực tiếp vào thư mục market1501 bên trong reid_dataset_custom
 DATASET_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reid_cam1_2_3")
 MODEL_NAME = "osnet_x1_0"
-MAX_EPOCHS = 6
+MAX_EPOCHS = 5
 BATCH_SIZE = 32
 LR = 0.0003
-SAVE_DIR = "log_osnet_finetune_cam1_2_3"
+SAVE_DIR = "log_osnet_finetune_cam1_2_3_test"
 
 def main():
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
