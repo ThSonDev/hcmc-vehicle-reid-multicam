@@ -1,26 +1,38 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.ipynb_checkpoints/
+
+.env
+.env.*
+
 output_cam*/
-weights/
-
 fine_tune_yolo/runs_cam*/
-
-/osnet/log*/
-/osnet/reid*/
-
+weights/
 yolov*.pt
-.venv
-__pycache__
+results/
+temp_eval_data/
+
+osnet/log*/
+osnet/reid*/
+
 /data/
+airflow/projects/vehicle-reid-multicam/data/
 
+airflow/logs/
+airflow/models/
+airflow/static/
 
+*.log
+*.csv
+*.sqlite3
+*.db
 
+*.egg-info/
+build/
+dist/
 
-
-
-
-airflow/logs
-airflow/projects/vehicle-reid-multicam/data
-airflow/models
-airflow/static
-
-temp_eval_data
-results
+.DS_Store
+.idea/
