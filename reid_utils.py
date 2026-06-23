@@ -6,28 +6,13 @@ import numpy as np
 import cv2
 import supervision as sv
 import base64
-import sys
 import os
-import json
+import logging
 from confluent_kafka import Consumer, Producer
 import torchreid
 
-# --- CẤU HÌNH THƯ VIỆN TORCHREID ---
-
-# current_file_path = os.path.abspath(__file__)
-# current_dir = os.path.dirname(current_file_path)
-# potential_paths = [
-#     os.path.join(current_dir, 'osnet', 'deep-person-reid'),
-#     os.path.join(current_dir, 'deep-person-reid')
-# ]
-# for p in potential_paths:
-#     if os.path.exists(p) and p not in sys.path:
-#         sys.path.insert(0, p)
-
-# try:
-#     import torchreid
-# except ImportError:
-#     pass # Bỏ qua lỗi import ở đây, sẽ báo lỗi khi khởi tạo class nếu cần
+# torchreid is installed editable from osnet/deep-person-reid (see setup.sh / README),
+# so it imports directly with no sys.path hack needed.
 
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -58,7 +43,7 @@ def decode_image_base64(b64_string):
     except: return None
 
 def merge_truck_boxes(detections, frame_shape):
-    """Gộp box xe tải/bus bị cắt đôi"""
+    """Merge truck/bus boxes that YOLO split in two."""
     if len(detections) < 2: return detections
     xyxy = detections.xyxy
     confidence = detections.confidence
@@ -122,26 +107,31 @@ def merge_truck_boxes(detections, frame_shape):
 # --- FEATURE EXTRACTOR (DYNAMIC PATH) ---
 
 class FeatureExtractor:
-    def __init__(self, model_path, model_arch='osnet_x1_0'):
-        print(f"[FeatureExtractor] Init: {model_arch} on {DEVICE}")
-        print(f"[FeatureExtractor] Loading weights: {model_path}")
-        
+    def __init__(self, model_path, model_arch='osnet_x1_0', logger=None):
+        self.log = logger or logging.getLogger("reid")
+        self.log.info("Init FeatureExtractor",
+                      extra={"event": "extractor_init", "arch": model_arch,
+                             "device": DEVICE, "weights": model_path})
+
         self.model = torchreid.models.build_model(
             name=model_arch, num_classes=100, loss='triplet', pretrained=False
         )
-        
+
         if os.path.exists(model_path):
             try:
                 checkpoint = torch.load(model_path, map_location=DEVICE)
                 state_dict = checkpoint.get('state_dict', checkpoint)
-                # Loại bỏ classifier
+                # Drop the classifier head
                 filtered_dict = {k: v for k, v in state_dict.items() if 'classifier' not in k}
                 self.model.load_state_dict(filtered_dict, strict=False)
-                print(">> Weights loaded!")
-            except Exception as e:
-                print(f"[ERROR] Weights load failed: {e}")
+                self.log.info("Loaded OSNet weights",
+                              extra={"event": "weights_loaded", "weights": model_path})
+            except Exception:
+                self.log.error("Failed to load OSNet weights", exc_info=True,
+                               extra={"event": "weights_error", "weights": model_path})
         else:
-            print(f"[WARNING] Path not found: {model_path}")
+            self.log.warning("OSNet weights not found, using random weights",
+                             extra={"event": "weights_missing", "weights": model_path})
 
         self.model.to(DEVICE)
         self.model.eval()
@@ -169,27 +159,30 @@ class FeatureExtractor:
     
 
 class MOTResultWriter:
-    def __init__(self, output_path, target_width=None, original_width=None, original_height=None):
+    def __init__(self, output_path, target_width=None, original_width=None,
+                 original_height=None, logger=None):
         """
-        Ghi kết quả tracking ra file chuẩn MOTChallenge.
+        Write tracking results in MOTChallenge format.
         Format: <frame>, <id>, <bb_left>, <bb_top>, <bb_width>, <bb_height>, <conf>, -1, -1, -1
         """
-        os.makedirs(os.path.dirname(output_path), exist_ok=True) 
-        
-        self.file = open(output_path, 'w')
+        self.log = logger or logging.getLogger("reid")
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
         self.output_path = output_path
         self.file = open(output_path, 'w')
-        
-        # Tính toán scale factor nếu chạy resize
+
+        # Compute scale factor when the stream is resized
         self.scale_x = 1.0
         self.scale_y = 1.0
-        
+
         if target_width and original_width and original_height:
-            # Giả sử giữ aspect ratio khi resize
+            # Assume aspect ratio is kept on resize
             target_height = int(original_height * (target_width / original_width))
             self.scale_x = original_width / target_width
             self.scale_y = original_height / target_height
-            print(f"[ResultWriter] Scaling coords by X:{self.scale_x:.2f}, Y:{self.scale_y:.2f}")
+            self.log.info("MOTResultWriter coordinate scaling",
+                          extra={"event": "mot_scale", "scale_x": round(self.scale_x, 2),
+                                 "scale_y": round(self.scale_y, 2), "output": output_path})
 
     def write(self, frame_idx, track_id, xyxy, conf=1.0):
         """
@@ -197,20 +190,20 @@ class MOTResultWriter:
         xyxy: [x1, y1, x2, y2]
         """
         x1, y1, x2, y2 = xyxy
-        
-        # Scale về độ phân giải gốc của GT
+
+        # Scale back to the GT's original resolution
         x1 *= self.scale_x
         y1 *= self.scale_y
         x2 *= self.scale_x
         y2 *= self.scale_y
-        
+
         w = x2 - x1
         h = y2 - y1
-        
-        # Format chuẩn MOT: frame, id, left, top, w, h, conf, -1, -1, -1
+
+        # MOT format: frame, id, left, top, w, h, conf, -1, -1, -1
         line = f"{int(frame_idx)},{int(track_id)},{x1:.2f},{y1:.2f},{w:.2f},{h:.2f},{conf:.2f},-1,-1,-1\n"
         self.file.write(line)
-        self.file.flush() # Ghi ngay lập tức
+        self.file.flush()  # write immediately
 
     def close(self):
         self.file.close()

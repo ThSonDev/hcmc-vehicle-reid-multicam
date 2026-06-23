@@ -2,12 +2,16 @@ import cv2
 import numpy as np
 import json
 import reid_utils as utils
-from confluent_kafka import Consumer
+
+import config
+from log_utils import setup_logging
+
+log = setup_logging("visualizer")
 
 # --- CONFIG ---
-BROKER = "localhost:9092"
-TOPIC_MATCH = "reid_matches"
-GROUP_ID = "visualizer_bottom_v4" # Đổi group ID
+BROKER = config.BROKER
+TOPIC_MATCH = config.TOPIC_MATCH
+GROUP_ID = config.GROUP_VISUALIZER
 
 # --- UI CONSTANTS ---
 WIN_W, WIN_H = 1000, 700
@@ -19,7 +23,7 @@ SCROLL_SPEED = 30
 matches_data = []  # Pane 1
 new_cam3_data = [] # Pane 2
 
-# Map tìm nhanh: {cam1_id: index}
+# Fast lookup map: {cam1_id: index}
 cam1_id_map = {}
 
 current_pane = 1 
@@ -138,82 +142,94 @@ def run_visualizer():
     cv2.namedWindow("ReID Visualizer")
     cv2.setMouseCallback("ReID Visualizer", mouse_callback)
 
-    print("[Visualizer] Waiting...")
+    log.info("Visualizer ready, waiting for matches", extra={"event": "ready", "broker": BROKER})
 
-    while True:
-        msg = consumer.poll(0.05)
-        
-        if msg and not msg.error():
-            try:
-                data = json.loads(msg.value().decode())
-                is_new = data.get('is_new', False)
-                src = data.get('cam_source')
-                
-                # --- LOGIC PANE 2 (New Cam 3) ---
-                if is_new and src == 'cam3':
-                    # Kiểm tra trùng lặp ID trước khi thêm
-                    c3_id = data.get('match_id')
-                    exists = any(item['match_id'] == c3_id for item in new_cam3_data)
-                    if not exists:
-                        # [CHANGE] Thêm vào CUỐI (Bottom)
-                        new_cam3_data.append(data)
-                        if len(new_cam3_data) > 100: new_cam3_data.pop(0)
-                        print(f"[UI] Appended New Cam3 ID: {c3_id}")
+    try:
+        while True:
+            msg = consumer.poll(0.05)
 
-                # --- LOGIC PANE 1 (Matched) ---
-                elif not is_new:
-                    # [LOGIC QUAN TRỌNG] Nếu Cam 3 match, kiểm tra xem xe này có đang ở Pane 2 không
-                    if src == 'cam3':
-                        c3_match_id = data.get('match_id')
-                        # Lọc bỏ xe này khỏi danh sách New (nếu có)
-                        initial_len = len(new_cam3_data)
-                        new_cam3_data = [item for item in new_cam3_data if item.get('match_id') != c3_match_id]
-                        if len(new_cam3_data) < initial_len:
-                            print(f"[UI] ♻️ Moved Cam3 ID {c3_match_id} from NEW -> MATCHED")
+            if msg and not msg.error():
+                try:
+                    data = json.loads(msg.value().decode())
+                    is_new = data.get('is_new', False)
+                    src = data.get('cam_source')
 
-                    c1_id = data.get('cam1_id')
-                    if c1_id is not None:
-                        c1_id = int(c1_id)
-                        
-                        # Nếu ID Cam 1 chưa có -> Tạo mới
-                        if c1_id not in cam1_id_map:
-                            row = { 'cam1_id': c1_id, 'cam1_b64': data.get('cam1_b64') }
-                            # [CHANGE] Thêm vào CUỐI (Bottom)
-                            matches_data.append(row)
-                            
-                            # Cập nhật map: Vì append nên index là phần tử cuối
-                            cam1_id_map[c1_id] = len(matches_data) - 1
-                            print(f"[UI] Appended Match Row C1 ID: {c1_id}")
-                        
-                        idx = cam1_id_map[c1_id]
-                        # Fix ảnh Cam 1 nếu lúc trước bị thiếu
-                        if matches_data[idx].get('cam1_b64') is None and data.get('cam1_b64'):
-                            matches_data[idx]['cam1_b64'] = data.get('cam1_b64')
+                    # --- LOGIC PANE 2 (New Cam 3) ---
+                    if is_new and src == 'cam3':
+                        # Check for duplicate ID before adding
+                        c3_id = data.get('match_id')
+                        exists = any(item['match_id'] == c3_id for item in new_cam3_data)
+                        if not exists:
+                            # Append to the bottom
+                            new_cam3_data.append(data)
+                            if len(new_cam3_data) > 100:
+                                new_cam3_data.pop(0)
+                            log.info("Added new cam3 vehicle to Pane 2",
+                                     extra={"event": "ui_new_cam3", "cam3_id": c3_id})
 
-                        if src == 'cam2':
-                            matches_data[idx]['cam2_id'] = data.get('match_id')
-                            matches_data[idx]['cam2_b64'] = data.get('match_b64')
-                            matches_data[idx]['cam2_score'] = data.get('score')
-                        elif src == 'cam3':
-                            matches_data[idx]['cam3_id'] = data.get('match_id')
-                            matches_data[idx]['cam3_b64'] = data.get('match_b64')
-                            matches_data[idx]['cam3_score'] = data.get('score')
+                    # --- PANE 1 LOGIC (Matched) ---
+                    elif not is_new:
+                        # If cam3 matched, check whether this vehicle is still in Pane 2
+                        if src == 'cam3':
+                            c3_match_id = data.get('match_id')
+                            # Remove it from the New list (if present)
+                            initial_len = len(new_cam3_data)
+                            new_cam3_data = [item for item in new_cam3_data if item.get('match_id') != c3_match_id]
+                            if len(new_cam3_data) < initial_len:
+                                log.info("Promoted cam3 vehicle NEW -> MATCHED",
+                                         extra={"event": "ui_promote", "cam3_id": c3_match_id})
 
-            except Exception as e:
-                print(f"[ERROR] {e}")
+                        c1_id = data.get('cam1_id')
+                        if c1_id is not None:
+                            c1_id = int(c1_id)
 
-        img = render_ui()
-        cv2.imshow("ReID Visualizer", img)
-        
-        k = cv2.waitKey(10)
-        if k == ord('q'): break
-        if k == ord('w'): scroll_y = max(0, scroll_y - SCROLL_SPEED)
-        if k == ord('s'): 
-            c_len = len(matches_data) if current_pane == 1 else len(new_cam3_data)
-            max_s = max(0, c_len * ROW_H - (WIN_H-BTN_H))
-            scroll_y = min(max_s, scroll_y + SCROLL_SPEED)
+                            # New cam1 ID -> create row
+                            if c1_id not in cam1_id_map:
+                                row = {'cam1_id': c1_id, 'cam1_b64': data.get('cam1_b64')}
+                                # Append to the bottom
+                                matches_data.append(row)
 
-    cv2.destroyAllWindows()
+                                # Update map: appended, so the index is the last element
+                                cam1_id_map[c1_id] = len(matches_data) - 1
+                                log.info("Added new match row (Pane 1)",
+                                         extra={"event": "ui_new_row", "cam1_id": c1_id})
+
+                            idx = cam1_id_map[c1_id]
+                            # Backfill the cam1 image if it was missing earlier
+                            if matches_data[idx].get('cam1_b64') is None and data.get('cam1_b64'):
+                                matches_data[idx]['cam1_b64'] = data.get('cam1_b64')
+
+                            if src == 'cam2':
+                                matches_data[idx]['cam2_id'] = data.get('match_id')
+                                matches_data[idx]['cam2_b64'] = data.get('match_b64')
+                                matches_data[idx]['cam2_score'] = data.get('score')
+                            elif src == 'cam3':
+                                matches_data[idx]['cam3_id'] = data.get('match_id')
+                                matches_data[idx]['cam3_b64'] = data.get('match_b64')
+                                matches_data[idx]['cam3_score'] = data.get('score')
+
+                except Exception:
+                    log.error("Error processing match message", exc_info=True, extra={"event": "msg_error"})
+
+            img = render_ui()
+            cv2.imshow("ReID Visualizer", img)
+
+            k = cv2.waitKey(10)
+            if k == ord('q'):
+                break
+            if k == ord('w'):
+                scroll_y = max(0, scroll_y - SCROLL_SPEED)
+            if k == ord('s'):
+                c_len = len(matches_data) if current_pane == 1 else len(new_cam3_data)
+                max_s = max(0, c_len * ROW_H - (WIN_H - BTN_H))
+                scroll_y = min(max_s, scroll_y + SCROLL_SPEED)
+    except KeyboardInterrupt:
+        log.info("Ctrl-C received, stopping visualizer", extra={"event": "shutdown"})
+    finally:
+        consumer.close()
+        cv2.destroyAllWindows()
+        log.info("Visualizer exited", extra={"event": "exit",
+                                             "rows": len(matches_data), "new_cam3": len(new_cam3_data)})
 
 if __name__ == "__main__":
     run_visualizer()
