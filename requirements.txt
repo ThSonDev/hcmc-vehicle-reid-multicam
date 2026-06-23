@@ -14,3 +14,18 @@ gdown==5.2.1
 tensorboard==2.20.0
 defusedxml==0.7.1
 dill==0.4.1
+
+# Logging / monitoring (psutil for CPU/RAM/disk, nvidia-ml-py for GPU in monitor.py)
+psutil==7.2.2
+nvidia-ml-py==13.610.43
+
+# Reporting (report.py plots; 3.7.x is the last line that plays nice with numpy 1.26)
+matplotlib==3.7.5
+
+# --- Install AFTER the block above, with --no-deps (do NOT add to the
+#     resolvable block: their dep trees would fight the pinned legacy versions) ---
+# Tracking (ByteTrack / Detections / annotators):
+#   uv pip install supervision==0.25.0 --no-deps
+# OSNet feature extractor (torchreid==1.4.0, editable vendored copy w/ Cython ext;
+#   needs gcc + the Cython/numpy pins above at build time):
+#   uv pip install -e osnet/deep-person-reid --no-deps --no-build-isolation
