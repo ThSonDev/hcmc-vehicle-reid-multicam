@@ -1,38 +1,54 @@
+# --- Python ---
 .venv/
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 .ipynb_checkpoints/
+*.egg-info/
+build/
+dist/
 
+# --- Secrets / env ---
 .env
 .env.*
 
-output_cam*/
-fine_tune_yolo/runs_cam*/
+# --- Models / weights ---
 weights/
 yolov*.pt
-results/
-temp_eval_data/
 
-osnet/log*/
-osnet/reid*/
-
+# --- Data / media (gitignored, supplied locally) ---
 /data/
 airflow/projects/vehicle-reid-multicam/data/
 
+# --- Pipeline outputs ---
+output_cam*/
+fine_tune_yolo/runs_cam*/
+results/
+temp_eval_data/
+osnet/log*/
+osnet/reid*/
+
+# --- Airflow runtime ---
 airflow/logs/
 airflow/models/
 airflow/static/
 
+# --- Logs / scratch (this project) ---
+logs/
+temp/
+
+# --- Misc generated files ---
 *.log
 *.csv
 *.sqlite3
 *.db
 
-*.egg-info/
-build/
-dist/
-
+# --- OS / IDE ---
 .DS_Store
 .idea/
+
+
+# --- Claude ---
+.claude/
+CLAUDE.md
