@@ -34,7 +34,7 @@ import config
 LOG_DIR = config.LOG_DIR
 IMAGES_DIR = os.path.join(LOG_DIR, "images")
 RESULTS_DIR = config.RESULTS_DIR
-GT_DIR = "."
+GT_DIR = config.GT_DIR
 
 # <stamp>_<component>.jsonl  (+ optional rotation suffix .1 .2 ...)
 _FILE_RE = re.compile(r"^(\d{2}-\d{2}-\d{2}_\d{2}-\d{2}-\d{4})_(.+?)\.jsonl(?:\.\d+)?$")
@@ -343,7 +343,8 @@ def eval_tracking():
     if not any(os.path.exists(os.path.join(RESULTS_DIR, f"res_{c}.txt")) for c in SEQS):
         return {"available": False, "note": "results/res_cam*.txt not found."}
     try:
-        proc = subprocess.run([sys.executable, "eval_metrics.py"],
+        eval_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "eval_metrics.py")
+        proc = subprocess.run([sys.executable, eval_script],
                               capture_output=True, text=True, timeout=600)
     except (subprocess.SubprocessError, OSError) as e:
         return {"available": False, "note": f"eval_metrics.py failed to run: {e}"}

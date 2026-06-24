@@ -5,8 +5,8 @@
 #   ./setup.sh
 #
 # When done, put videos in data/ and weights in weights/, then:
-#   docker compose up -d        # Kafka
-#   .venv/bin/python run.py     # run the whole pipeline
+#   docker compose up -d            # Kafka
+#   .venv/bin/python local/run.py   # run the whole pipeline
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -39,4 +39,4 @@ echo "Done. Quick check:"
 print('  torch', torch.__version__, '| cuda', torch.cuda.is_available()); \
 print('  supervision', supervision.__version__, '| torchreid', torchreid.__version__)"
 echo ""
-echo "Next: put videos in data/ , weights in weights/ , then 'docker compose up -d' and '.venv/bin/python run.py'."
+echo "Next: put videos in data/ , weights in weights/ , then 'docker compose up -d' and '.venv/bin/python local/run.py'."

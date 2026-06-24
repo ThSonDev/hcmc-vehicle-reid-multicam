@@ -38,6 +38,9 @@ _RESET = "\033[0m"
 _MAX_BYTES = 5 * 1024 * 1024
 _BACKUP_COUNT = 3
 
+# Project root (parent of local/) so logs land in <root>/logs regardless of the cwd.
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 # Per-run timestamp baked into log filenames (time_day-month-year) so each run is
 # separated. run.py exports REID_LOG_STAMP so every component of one launch shares it;
 # a standalone script falls back to its own start time.
@@ -91,7 +94,7 @@ def setup_logging(component, level=logging.INFO, log_dir=None):
     attaching duplicate handlers. Console follows `level`; the JSONL file always
     logs from DEBUG to keep full detail.
     """
-    log_dir = log_dir or os.environ.get("REID_LOG_DIR", "logs")
+    log_dir = log_dir or os.environ.get("REID_LOG_DIR") or os.path.join(_ROOT, "logs")
     logger = logging.getLogger(component)
     if logger.handlers:  # already configured -> idempotent
         return logger

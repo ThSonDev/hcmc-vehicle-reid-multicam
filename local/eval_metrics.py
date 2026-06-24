@@ -29,9 +29,9 @@ if not hasattr(np, 'float'):
 if not hasattr(np, 'int'):
     np.int = int
 
-GT_DIR = "."
-RES_DIR = "./results"
-TEMP_ROOT = "./temp_eval_data"
+GT_DIR = config.GT_DIR              # repo root (gt_cam*.txt live there)
+RES_DIR = config.RESULTS_DIR
+TEMP_ROOT = config.TEMP_EVAL_DIR
 TRACKER_NAME = "MyLocalAlgo"
 EVAL_CLASS = 1            # map every vehicle class -> this single evaluated class
 

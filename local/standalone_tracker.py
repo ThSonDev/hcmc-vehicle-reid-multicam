@@ -7,19 +7,22 @@ from ultralytics import YOLO
 import supervision as sv
 
 # --- CẤU HÌNH ---
+# Neo các đường dẫn vào gốc repo (cha của local/) để chạy được từ bất kỳ thư mục nào.
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 VIDEO_SOURCES = {
-    "cam1": "data/cam1_half.mp4",
-    "cam2": "data/cam2_half.mp4",
-    "cam3": "data/cam3_half.mp4"
+    "cam1": os.path.join(_ROOT, "data", "cam1_half.mp4"),
+    "cam2": os.path.join(_ROOT, "data", "cam2_half.mp4"),
+    "cam3": os.path.join(_ROOT, "data", "cam3_half.mp4"),
 }
 
 MODEL_PATHS = {
-    "cam1": "weights/cam1.pt",
-    "cam2": "weights/cam2.pt",
-    "cam3": "weights/cam1.pt" 
+    "cam1": os.path.join(_ROOT, "weights", "cam1.pt"),
+    "cam2": os.path.join(_ROOT, "weights", "cam2.pt"),
+    "cam3": os.path.join(_ROOT, "weights", "cam1.pt"),
 }
 
-OUTPUT_DIR = "results"  # Folder chứa kết quả
+OUTPUT_DIR = os.path.join(_ROOT, "results")  # Folder chứa kết quả
 
 # Tracker Config (Cần giống Consumer để sát thực tế)
 CONF_THRESHOLD = 0.5
@@ -107,8 +110,9 @@ def main():
     print("🚀 CHUYỂN SANG ĐÁNH GIÁ (EVALUATION)...")
     print("="*40)
     
-    if os.path.exists("eval_metrics.py"):
-        os.system("python eval_metrics.py")
+    eval_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "eval_metrics.py")
+    if os.path.exists(eval_script):
+        os.system(f"{sys.executable} {eval_script}")
     else:
         print("❌ Không tìm thấy file eval_metrics.py để chạy đánh giá.")
 
