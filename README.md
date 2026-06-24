@@ -22,13 +22,50 @@ producer ──▶ video_reid_stream ──▶ cam1  ──▶ reid_gallery_stre
 - **cam2** — matches frame-by-frame against the cam1 gallery (travel-time gated; one cam1 id used once).
 - **cam3** — buffers a "best shot" per track and matches on track exit; emits *new vehicle* when no match (it sits on a new road).
 - **visualizer** — joins match events into one row per source vehicle.
-- **monitor** — samples CPU/GPU/RAM/disk to `logs/`. Every component logs structured JSONL; `report.py` concises a run into a Markdown digest + plots.
+- **monitor** — samples CPU/GPU/RAM/disk to `logs/`. Every component logs structured JSONL; `local/report.py` concises a run into a Markdown digest + plots.
 
 Kafka topics: `video_reid_stream` (frames), `reid_gallery_stream` (cam1 embeddings),
-`reid_matches` (match events). Infra config (broker, topics, model/video paths) lives in `config.py`.
+`reid_matches` (match events). Infra config (broker, topics, model/video paths) lives in `local/config.py`.
 
 > There is also an Airflow + Spark Structured Streaming variant under `airflow/` (Spark consumers
 > write matches to Postgres, Streamlit UI). It's a separate stack — don't mix it with the local scripts.
+
+## Project structure
+
+The local pipeline lives in `local/`. Artifact paths (`data/ weights/ results/ logs/`,
+`gt_cam*.txt`) are anchored to the project root, so you can run from **inside `local/`**
+(`cd local && python run.py`) or from the **repo root** (`python local/run.py`) — either works.
+
+```
+.
+├── local/                    # ← the local pipeline (run these)
+│   ├── run.py                # orchestrator: launches every component
+│   ├── producer.py           # streams 3 videos -> Kafka topic video_reid_stream
+│   ├── consumer_cam1.py      # source: detect + track + publish gallery embeddings
+│   ├── consumer_cam2.py      # frame-by-frame matcher vs the cam1 gallery
+│   ├── consumer_cam3.py      # best-shot matcher (new road); emits new vehicles
+│   ├── match_visualizer.py   # 2-pane match UI
+│   ├── monitor.py            # CPU/GPU/RAM/disk sampler
+│   ├── report.py             # run digest (Markdown + plots); --eval grades vs GT
+│   ├── eval_metrics.py       # trackeval HOTA/MOTA/IDF1 (called by report --eval)
+│   ├── standalone_tracker.py # offline detect+track (no Kafka), auto-evaluates
+│   ├── config.py             # Kafka / topics / model + video paths (env-overridable)
+│   ├── log_utils.py          # structured console + JSONL logging
+│   ├── gui_utils.py          # headless-aware OpenCV wrappers (REID_HEADLESS)
+│   └── reid_utils.py         # FeatureExtractor, box merging, MOT result writer
+├── airflow/                  # separate Airflow + Spark variant (don't mix)
+├── osnet/                    # vendored torchreid fork + OSNet training helpers
+├── fine_tune_yolo/           # YOLO fine-tuning (MOT -> YOLO dataset)
+├── demos/                    # throwaway box-drawing demos
+├── data/                     # input videos               (gitignored)
+├── weights/                  # YOLO .pt + OSNet .pth       (gitignored)
+├── results/                  # res_cam*.txt MOT outputs    (gitignored)
+├── logs/                     # per-run JSONL + report.md + images/ (gitignored)
+├── gt_cam{1,2,3}.txt         # ground truth (global cross-camera IDs)
+├── requirements.txt
+├── setup.sh                  # one-command bootstrap
+└── docker-compose.yaml       # local Kafka (KRaft, port 9092)
+```
 
 ## Requirements
 
@@ -59,14 +96,16 @@ Then supply the gitignored assets:
 
 ## Run the local pipeline
 
-**Tutorial (the happy path):**
+**Tutorial (the happy path):** commands below run from inside `local/` (`cd local` once);
+they also work from the repo root as `python local/<script>.py`.
 
 1. **Start Kafka** (must be up before anything else, or consumers receive nothing):
    ```bash
-   docker compose up -d              # local Kafka (KRaft, port 9092)
+   docker compose up -d              # local Kafka (KRaft, port 9092) — from the repo root
    ```
 2. **Run everything** with one command:
    ```bash
+   cd local
    python run.py           # monitor + cam1/2/3 + visualizer + producer
    ```
    Five OpenCV windows open; matches show up in the visualizer. Stop with `quit` or Ctrl-C.
@@ -89,14 +128,23 @@ Useful flags: `--only cam1,cam2`, `--exclude monitor`, `--no-monitor`, and `--on
 (stream each video a single pass, then auto-stop — use this before evaluating).
 Or press `q` inside a camera window to close just that one.
 
+**Remote / headless (SSH, no display):** add `--headless` to skip all OpenCV windows —
+components run logic-only and write to console + JSONL, so you drive everything from the
+report and logs. With a detached/piped stdin (no TTY) the control console is skipped and
+the pipeline just runs until Ctrl-C, so `nohup python run.py --headless &` is safe.
+
+```bash
+python run.py --once --headless    # single pass, no windows -> then report --eval
+```
+
 ### Evaluate against ground truth
 
 ```bash
-python run.py --once       # one clean pass (writes results/res_cam*.txt)
-python report.py --eval    # grades ReID + detection/tracking vs gt_cam*.txt
+python run.py --once     # one clean pass (writes results/res_cam*.txt)
+python report.py --eval  # grades ReID + detection/tracking vs gt_cam*.txt
 ```
 
-`--eval` needs the run to be a single pass (`--once`) and `trackeval` installed
+`--eval` needs the run to be a single pass (`run.py --once`) and `trackeval` installed
 (`pip install git+https://github.com/JonathonLuiten/TrackEval.git`). It scales the 640p res
 boxes up to the ground-truth resolution and scores only on the frames the pipeline produced.
 
@@ -106,7 +154,7 @@ Every component logs to the console **and** to a structured `logs/<stamp>_<compo
 (size-rotated, one run per `<stamp>`) — re-read with e.g.
 `jq 'select(.event=="match")' logs/<stamp>_cam2.jsonl`, or just run `report.py`.
 
-Prefer separate terminals? Each component also runs standalone:
+Prefer separate terminals? Each component also runs standalone (from inside `local/`):
 
 ```bash
 python producer.py
