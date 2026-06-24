@@ -8,6 +8,7 @@ import supervision as sv
 import reid_utils as utils
 
 import config
+import gui_utils as gui
 from log_utils import setup_logging
 
 log = setup_logging("cam1")
@@ -43,7 +44,7 @@ def run_cam1():
         return
 
     res_writer = utils.MOTResultWriter(
-        output_path="results/res_cam1.txt",
+        output_path=config.res_path("cam1"),
         target_width=None,  # or 640 if the producer streams at 640
         original_width=1920,
         original_height=1080,
@@ -185,15 +186,15 @@ def run_cam1():
                 frame = box_an.annotate(frame, detections_display)
 
             cv2.putText(frame, f"Cam 1: {time_str}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-            cv2.imshow("Cam 1 - Sender", frame)
-            if cv2.waitKey(1) == ord('q'):
+            gui.imshow("Cam 1 - Sender", frame)
+            if gui.waitKey(1) == ord('q'):
                 break
     except KeyboardInterrupt:
         log.info("Ctrl-C received, stopping cam1", extra={"event": "shutdown"})
     finally:
         consumer.close()
         res_writer.close()
-        cv2.destroyAllWindows()
+        gui.destroyAllWindows()
         log.info("Cam1 exited", extra={"event": "exit", "frames": frame_count, "gallery_sent": sent_count})
 
 

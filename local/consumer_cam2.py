@@ -7,6 +7,7 @@ import supervision as sv
 import reid_utils as utils
 
 import config
+import gui_utils as gui
 from log_utils import setup_logging
 
 log = setup_logging("cam2")
@@ -42,7 +43,7 @@ def run_cam2():
     producer = utils.get_kafka_producer(BROKER)
 
     res_writer = utils.MOTResultWriter(
-        output_path="results/res_cam2.txt",
+        output_path=config.res_path("cam2"),
         target_width=None,  # producer does not resize
         original_width=1920,
         original_height=1080,
@@ -190,15 +191,15 @@ def run_cam2():
                     last_hb = now
                     hb_frame_mark = frame_count
 
-                cv2.imshow("Cam 2", frame)
-                if cv2.waitKey(1) == ord('q'):
+                gui.imshow("Cam 2", frame)
+                if gui.waitKey(1) == ord('q'):
                     break
     except KeyboardInterrupt:
         log.info("Ctrl-C received, stopping cam2", extra={"event": "shutdown"})
     finally:
         consumer.close()
         res_writer.close()
-        cv2.destroyAllWindows()
+        gui.destroyAllWindows()
         log.info("Cam2 exited", extra={"event": "exit", "frames": frame_count, "matches": match_count})
 
 

@@ -4,6 +4,7 @@ import json
 import reid_utils as utils
 
 import config
+import gui_utils as gui
 from log_utils import setup_logging
 
 log = setup_logging("visualizer")
@@ -139,10 +140,11 @@ def run_visualizer():
     global scroll_y, cam1_id_map, matches_data, new_cam3_data
     consumer = utils.get_kafka_consumer(BROKER, GROUP_ID, [TOPIC_MATCH])
     
-    cv2.namedWindow("ReID Visualizer")
-    cv2.setMouseCallback("ReID Visualizer", mouse_callback)
+    gui.namedWindow("ReID Visualizer")
+    gui.setMouseCallback("ReID Visualizer", mouse_callback)
 
-    log.info("Visualizer ready, waiting for matches", extra={"event": "ready", "broker": BROKER})
+    log.info("Visualizer ready, waiting for matches",
+             extra={"event": "ready", "broker": BROKER, "headless": gui.HEADLESS})
 
     try:
         while True:
@@ -211,10 +213,12 @@ def run_visualizer():
                 except Exception:
                     log.error("Error processing match message", exc_info=True, extra={"event": "msg_error"})
 
-            img = render_ui()
-            cv2.imshow("ReID Visualizer", img)
+            # Headless: skip the canvas render entirely; matches are still logged as
+            # ui_* events to the JSONL, which is what an AI/CLI session reads anyway.
+            if not gui.HEADLESS:
+                gui.imshow("ReID Visualizer", render_ui())
 
-            k = cv2.waitKey(10)
+            k = gui.waitKey(10)
             if k == ord('q'):
                 break
             if k == ord('w'):
@@ -227,7 +231,7 @@ def run_visualizer():
         log.info("Ctrl-C received, stopping visualizer", extra={"event": "shutdown"})
     finally:
         consumer.close()
-        cv2.destroyAllWindows()
+        gui.destroyAllWindows()
         log.info("Visualizer exited", extra={"event": "exit",
                                              "rows": len(matches_data), "new_cam3": len(new_cam3_data)})
 

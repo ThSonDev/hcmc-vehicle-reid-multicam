@@ -8,6 +8,8 @@ Examples:
     python run.py --only cam1,cam2    # run only cam1 and cam2
     python run.py --exclude monitor   # run everything except monitor
     python run.py --no-monitor        # skip the resource monitor
+    python run.py --headless          # no GUI windows (SSH / no display)
+    python run.py --once --headless   # single pass, no windows (remote eval run)
 
 While running, type commands in this terminal:
     stop <name>     stop one component       (e.g. stop cam2)
@@ -18,7 +20,8 @@ While running, type commands in this terminal:
 
 (Or press 'q' in a camera's OpenCV window to close just that one.)
 
-Note: run with the .venv's Python (e.g. `.venv/bin/python run.py` or after `source .venv/bin/activate`).
+Run from the repo root with the .venv's Python: `python local/run.py`
+(after `source .venv/bin/activate`, or `.venv/bin/python local/run.py`).
 """
 import argparse
 import datetime
@@ -27,6 +30,10 @@ import signal
 import subprocess
 import sys
 import time
+
+# Directory holding the component scripts (this file's own folder), so run.py works
+# regardless of the current working directory (which stays the repo root for data/results).
+HERE = os.path.dirname(os.path.abspath(__file__))
 
 # name -> argv passed to the interpreter
 COMPONENTS = {
@@ -56,7 +63,8 @@ def start(name):
     if is_running(name):
         print(f"[run] '{name}' is already running.")
         return
-    argv = [sys.executable, *COMPONENTS[name]]
+    script = COMPONENTS[name]
+    argv = [sys.executable, os.path.join(HERE, script[0]), *script[1:]]
     # Own process group + no stdin (stdin is reserved for the controller)
     procs[name] = subprocess.Popen(argv, start_new_session=True, stdin=subprocess.DEVNULL)
     print(f"[run] > start '{name}' (pid {procs[name].pid})")
@@ -116,6 +124,14 @@ def wait_for_producer(drain):
     time.sleep(drain)
 
 
+def wait_forever():
+    """No interactive console available (e.g. detached / piped stdin): just keep the
+    components running and block until Ctrl-C, instead of exiting and tearing them down."""
+    print("[run] No TTY for the control console; running until Ctrl-C.")
+    while any(is_running(n) for n in procs):
+        time.sleep(1.0)
+
+
 def control_loop():
     print("[run] Type 'status', 'stop <name>', 'start <name>', 'restart <name>', 'quit'. (Ctrl-C to exit)")
     while True:
@@ -159,6 +175,9 @@ def main():
                          "(no interactive console). Needed for report.py --eval.")
     ap.add_argument("--drain", type=float, default=15.0,
                     help="With --once: seconds to let consumers finish after the producer ends")
+    ap.add_argument("--headless", action="store_true",
+                    help="No GUI windows (for SSH / no display). Components only log to "
+                         "console + JSONL. Sets REID_HEADLESS=1 for every component.")
     args = ap.parse_args()
 
     selected = list(START_ORDER)
@@ -181,6 +200,8 @@ def main():
     os.environ["REID_LOG_STAMP"] = datetime.datetime.now().strftime("%H-%M-%S_%d-%m-%Y")
     if args.once:
         os.environ["REID_REPLAY"] = "0"  # producer streams a single pass then stops
+    if args.headless:
+        os.environ["REID_HEADLESS"] = "1"  # disable OpenCV windows in every component
 
     print(f"[run] Will run: {', '.join(selected)}")
     try:
@@ -192,8 +213,10 @@ def main():
             time.sleep(0.5)  # small stagger while models load
         if args.once and "producer" in selected:
             wait_for_producer(args.drain)
-        else:
+        elif sys.stdin.isatty():
             control_loop()
+        else:
+            wait_forever()
     except KeyboardInterrupt:
         pass
     finally:
