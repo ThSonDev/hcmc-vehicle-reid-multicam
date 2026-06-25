@@ -2,11 +2,11 @@ import os
 import torch
 from torchreid import data, models, optim, engine
 
-print(">>> Đã kết nối với torchreid thành công!")
+print(">>> Connected to torchreid successfully!")
 
 # --- 2. TUNING CONFIG ---
 
-# Trỏ trực tiếp vào thư mục market1501 bên trong reid_dataset_custom
+# Point directly at the market1501 folder inside the custom reid dataset
 DATASET_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reid_cam1_2_3")
 MODEL_NAME = "osnet_x1_0"
 MAX_EPOCHS = 5
@@ -16,10 +16,10 @@ SAVE_DIR = "log_osnet_finetune_cam1_2_3_test"
 
 def main():
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    print(f">>> Bắt đầu huấn luyện trên thiết bị: {device}")
+    print(f">>> Starting training on device: {device}")
 
-    # 3. Khởi tạo DataManager
-    # Bỏ tham số 'download' gây lỗi TypeError
+    # 3. Init DataManager
+    # Dropped the 'download' arg (it raises TypeError)
     datamanager = data.ImageDataManager(
         root=DATASET_ROOT,
         sources="market1501",
@@ -32,8 +32,8 @@ def main():
         transforms=["random_flip", "random_erase", "color_jitter"]
     )
 
-    # 4. Xây dựng Model
-    print(f">>> Đang khởi tạo backbone {MODEL_NAME}...")
+    # 4. Build Model
+    print(f">>> Initializing backbone {MODEL_NAME}...")
     model = models.build_model(
         name=MODEL_NAME,
         num_classes=datamanager.num_train_pids,
@@ -53,7 +53,7 @@ def main():
         gamma=0.1
     )
 
-    # 6. Khởi tạo Engine
+    # 6. Init Engine
     reid_engine = engine.ImageTripletEngine(
         datamanager,
         model,
@@ -62,7 +62,7 @@ def main():
         label_smooth=True
     )
 
-    # 7. Chạy Huấn Luyện
+    # 7. Run Training
     reid_engine.run(
         save_dir=SAVE_DIR,
         max_epoch=MAX_EPOCHS,

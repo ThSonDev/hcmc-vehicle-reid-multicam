@@ -1,8 +1,11 @@
+import os
 import cv2
 import numpy as np
 
-VIDEO_PATH = r"./data/cam2_half.mp4"  # change this
-MOT_PATH = r"gt_cam2.txt"  # change this
+# Anchor to the repo root (data/ and gt moved into local/).
+_REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+VIDEO_PATH = os.path.join(_REPO, "local", "data", "cam2_half.mp4")  # change this
+MOT_PATH = os.path.join(_REPO, "local", "gt", "gt_cam2.txt")  # change this
 # Optional — class names based on your class_id mapping
 CLASS_NAMES = {
     1: "car",

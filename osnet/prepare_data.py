@@ -4,18 +4,23 @@ import pandas as pd
 import numpy as np
 import shutil
 
-# --- CẤU HÌNH DỮ LIỆU ---
+# --- DATA CONFIG ---
+
+# Anchor to the repo root so it runs from any directory (data/ and gt moved into local/).
+_REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_DATA = os.path.join(_REPO, "local", "data")
+_GT = os.path.join(_REPO, "local", "gt")
 
 VIDEO_PATHS = {
-    "cam1": "../data/cam1_half.mp4",
-    "cam2": "../data/cam2_half.mp4",
-    "cam3": "../data/cam3_half.mp4" 
+    "cam1": os.path.join(_DATA, "cam1_half.mp4"),
+    "cam2": os.path.join(_DATA, "cam2_half.mp4"),
+    "cam3": os.path.join(_DATA, "cam3_half.mp4"),
 }
 
 ANNOTATION_PATHS = {
-    "cam1": "../gt_cam1.txt",
-    "cam2": "../gt_cam2.txt",
-    "cam3": "../gt_cam3.txt"
+    "cam1": os.path.join(_GT, "gt_cam1.txt"),
+    "cam2": os.path.join(_GT, "gt_cam2.txt"),
+    "cam3": os.path.join(_GT, "gt_cam3.txt"),
 }
 
 OUTPUT_DIR = "reid_cam1_2_3" 
@@ -26,7 +31,7 @@ def ensure_dir(path):
     os.makedirs(path)
 
 def main():
-    # 1. Tạo cấu trúc thư mục
+    # 1. Create the folder structure
     train_dir = os.path.join(OUTPUT_DIR, "bounding_box_train")
     query_dir = os.path.join(OUTPUT_DIR, "query")          
     gallery_dir = os.path.join(OUTPUT_DIR, "bounding_box_test") 
@@ -35,28 +40,28 @@ def main():
     ensure_dir(query_dir)
     ensure_dir(gallery_dir)
     
-    # 2. LẤY TẤT CẢ ID TỪ CẢ 3 CAMERAS (Sửa lỗi bỏ sót ID)
+    # 2. Collect all IDs from all 3 cameras (so none are missed)
     all_ids_list = []
     for cam_name in ANNOTATION_PATHS:
         df_tmp = pd.read_csv(ANNOTATION_PATHS[cam_name], header=None)
         all_ids_list.extend(df_tmp[1].unique())
     
     all_ids = np.unique(all_ids_list)
-    all_ids = all_ids[all_ids >= 0] # Lọc ID rác
+    all_ids = all_ids[all_ids >= 0] # drop junk IDs
     
     np.random.shuffle(all_ids)
     split_idx = int(len(all_ids) * TRAIN_RATIO)
     train_ids = set(all_ids[:split_idx])
     test_ids = set(all_ids[split_idx:])
     
-    print(f"Tổng số ID từ 3 Cam: {len(all_ids)}. Train: {len(train_ids)}, Test: {len(test_ids)}")
-    
-    # 3. Xử lý video và lưu ảnh
-    cam_map = {"cam1": 1, "cam2": 2, "cam3": 3} 
+    print(f"Total IDs from 3 cams: {len(all_ids)}. Train: {len(train_ids)}, Test: {len(test_ids)}")
+
+    # 3. Process videos and save crops
+    cam_map = {"cam1": 1, "cam2": 2, "cam3": 3}
     
     for cam_name, v_path in VIDEO_PATHS.items():
         anno_path = ANNOTATION_PATHS[cam_name]
-        print(f"Đang cắt ảnh {cam_name}...")
+        print(f"Cropping images for {cam_name}...")
         
         cap = cv2.VideoCapture(v_path)
         df = pd.read_csv(anno_path, header=None)
@@ -68,7 +73,7 @@ def main():
             if not ret: break
             frame_idx += 1
             
-            if frame_idx % 2 != 0: continue # Giảm FPS để tránh trùng lặp quá nhiều
+            if frame_idx % 2 != 0: continue # halve FPS to avoid too many near-duplicates
 
             if frame_idx in groups.groups:
                 rows = groups.get_group(frame_idx)
@@ -89,9 +94,9 @@ def main():
                     if tid in train_ids:
                         cv2.imwrite(os.path.join(train_dir, fname), crop)
                     elif tid in test_ids:
-                        # Chiến lược phân bổ cho tập Test:
-                        # - Gallery: Dùng Cam 1 (Kho ảnh gốc)
-                        # - Query: Dùng Cam 2 và Cam 3 (Ảnh thực tế đi qua để truy vấn)
+                        # Test split strategy:
+                        # - Gallery: use Cam 1 (the source image bank)
+                        # - Query: use Cam 2 and Cam 3 (the actual passing shots to query with)
                         if cam_name == "cam1":
                             cv2.imwrite(os.path.join(gallery_dir, fname), crop)
                         else:
@@ -99,7 +104,7 @@ def main():
                             
         cap.release()
 
-    print("Chuẩn bị dữ liệu 3 Cam hoàn tất!")
+    print("3-cam data preparation complete!")
 
 if __name__ == "__main__":
     main()

@@ -8,10 +8,10 @@ MODEL = "yolov8s.pt"
 DATA_CAM2 = "dataset_cam2/data.yaml"
 
 # train params
-IMGSZ = 640          # FullHD + xe nhỏ => nên 960 (640 vẫn được nhưng dễ miss xe nhỏ)
+IMGSZ = 640          # FullHD + small vehicles => prefer 960 (640 works but misses small ones more easily)
 EPOCHS = 15
-BATCH = 16            # nếu out-of-memory => giảm 4
-DEVICE = 0           # 0 = GPU0, "cpu" = chạy CPU (rất chậm)
+BATCH = 16            # if out-of-memory => lower to 4
+DEVICE = 0           # 0 = GPU0, "cpu" = run on CPU (very slow)
 WORKERS = 4
 
 # output folders
@@ -23,7 +23,7 @@ NAME_CAM2 = "train"
 
 def check_exists(path):
     if not os.path.exists(path):
-        print(f"[ERROR] Không tìm thấy: {path}")
+        print(f"[ERROR] Not found: {path}")
         sys.exit(1)
 
 def train_one(data_yaml, project, name):

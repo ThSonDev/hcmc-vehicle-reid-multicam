@@ -8,8 +8,8 @@ LBL_DIR = "dataset_cam3/labels/train"
 FPS = 30
 DELAY_MS = int(1000 / FPS)
 
-# class names theo data.yaml của bạn (đổi cho đúng)
-CLASS_NAMES = ["class0", "class1", "class2"]  # sửa lại cho khớp nc=3
+# class names from your data.yaml (edit to match)
+CLASS_NAMES = ["class0", "class1", "class2"]  # adjust to match nc=3
 
 def read_yolo_label(label_path):
     boxes = []
@@ -44,7 +44,7 @@ def yolo_to_xyxy(x, y, w, h, img_w, img_h):
 def main():
     img_paths = sorted(glob.glob(os.path.join(IMG_DIR, "*.jpg")))
     if not img_paths:
-        print(f"[ERROR] Không thấy ảnh trong: {IMG_DIR}")
+        print(f"[ERROR] No images found in: {IMG_DIR}")
         return
 
     paused = False
@@ -64,7 +64,7 @@ def main():
 
         img = cv2.imread(img_path)
         if img is None:
-            print(f"[WARN] Không đọc được ảnh: {img_path}")
+            print(f"[WARN] Could not read image: {img_path}")
             idx += 1
             continue
 
