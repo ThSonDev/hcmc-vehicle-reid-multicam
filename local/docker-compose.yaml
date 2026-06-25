@@ -1,3 +1,8 @@
+# Local pipeline Kafka (single-node KRaft). Independent from the Airflow stack,
+# which runs its own broker under airflow/docker-compose.yaml.
+# Pinned project name keeps the container/volume/network stable no matter which
+# directory you run `docker compose` from.
+name: vehicle-reid-local
 services:
   kafka:
     image: confluentinc/cp-kafka:7.5.0
@@ -9,7 +14,7 @@ services:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: "broker,controller"
 
-      # cái này Confluent dùng voters, không dùng bootstrap_servers
+      # KRaft uses voters, not bootstrap_servers
       KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka-server:9093"
 
       # listeners
@@ -34,14 +39,17 @@ services:
       KAFKA_REPLICA_FETCH_MAX_BYTES: 10485760
       KAFKA_SOCKET_REQUEST_MAX_BYTES: 10485760
 
-# Chỉ lưu message trong 5 phút (300,000 ms)
-      KAFKA_LOG_RETENTION_MS: 300000
-      # Chỉ lưu tối đa 1GB log toàn cục
-      KAFKA_LOG_RETENTION_BYTES: 1073741824
-      # Kích thước mỗi file log segment (256MB)
-      KAFKA_LOG_SEGMENT_BYTES: 268435456
-      # Tần suất kiểm tra để xóa file cũ (mỗi 1 phút)
-      KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: 60000
+      # Retention is sized for this pipeline, not for durability. Keep messages just
+      # long enough to cover the cross-camera travel window (cam3 matches ~20-40s after
+      # cam1) plus consumer lag headroom: 2 minutes.
+      KAFKA_LOG_RETENTION_MS: 120000
+      # Secondary cap, per partition (~2 min of the busy frame topic at ~3-4 MB/s).
+      KAFKA_LOG_RETENTION_BYTES: 536870912
+      # Small segments so old data can actually roll off and be deleted within a run;
+      # a 256 MB segment would barely roll before retention should have purged it.
+      KAFKA_LOG_SEGMENT_BYTES: 67108864
+      # Check for expired segments every 30s so cleanup is timely between test runs.
+      KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: 30000
 
     volumes:
       - kafka_data:/var/lib/kafka/data

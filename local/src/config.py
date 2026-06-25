@@ -6,9 +6,10 @@ tuning params stay in each consumer for easy tweaking. Overridable via env vars
 """
 import os
 
-# Project root = the parent of this file's folder (local/). All artifact paths below are
-# anchored to it, so the pipeline runs the same from the repo root or from inside local/
-# (e.g. `cd local && python run.py`).
+# Project root = the parent of this file's folder (src/) = the local/ project dir. All
+# artifact paths below are anchored to it, so the pipeline runs the same whether you are
+# inside local/ (`python run.py`) or call it from the repo root (`python local/run.py`);
+# the cwd does not matter.
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -50,5 +51,5 @@ VIDEO_SOURCES = {
 # --- DIRECTORIES (all anchored to ROOT) ---
 LOG_DIR = os.environ.get("REID_LOG_DIR") or _root("logs")
 RESULTS_DIR = _root("results")
-GT_DIR = ROOT                       # gt_cam*.txt live at the repo root
+GT_DIR = _root("gt")                # gt_cam*.txt live under local/gt/
 TEMP_EVAL_DIR = _root("temp_eval_data")

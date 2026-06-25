@@ -12,7 +12,7 @@ Adapts to the pipeline automatically:
 The only thing configured below is GT_RESOLUTION (the coordinate space the annotations
 were made in) — a stable property of the dataset, not of the pipeline.
 
-Run:  python eval_metrics.py        # expects gt_cam*.txt in repo root, res in results/
+Run:  python eval_metrics.py        # expects gt_cam*.txt in local/gt/, res in local/results/
 """
 import os
 import shutil
@@ -29,7 +29,7 @@ if not hasattr(np, 'float'):
 if not hasattr(np, 'int'):
     np.int = int
 
-GT_DIR = config.GT_DIR              # repo root (gt_cam*.txt live there)
+GT_DIR = config.GT_DIR              # local/gt/ (gt_cam*.txt live there)
 RES_DIR = config.RESULTS_DIR
 TEMP_ROOT = config.TEMP_EVAL_DIR
 TRACKER_NAME = "MyLocalAlgo"

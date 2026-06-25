@@ -19,6 +19,7 @@ yolov*.pt
 
 # --- Data / media (gitignored, supplied locally) ---
 /data/
+local/data/
 airflow/projects/vehicle-reid-multicam/data/
 
 # --- Pipeline outputs ---

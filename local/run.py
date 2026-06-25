@@ -20,8 +20,8 @@ While running, type commands in this terminal:
 
 (Or press 'q' in a camera's OpenCV window to close just that one.)
 
-Run from the repo root with the .venv's Python: `python local/run.py`
-(after `source .venv/bin/activate`, or `.venv/bin/python local/run.py`).
+Run from inside local/ with the venv active: `cd local && python run.py`
+(after `source .venv/bin/activate`, or `.venv/bin/python run.py`).
 """
 import argparse
 import datetime
@@ -31,9 +31,10 @@ import subprocess
 import sys
 import time
 
-# Directory holding the component scripts (this file's own folder), so run.py works
-# regardless of the current working directory (which stays the repo root for data/results).
+# Component scripts live in src/ (next to this file). Resolving them absolutely lets
+# run.py work regardless of the current working directory.
 HERE = os.path.dirname(os.path.abspath(__file__))
+SRC = os.path.join(HERE, "src")
 
 # name -> argv passed to the interpreter
 COMPONENTS = {
@@ -64,7 +65,7 @@ def start(name):
         print(f"[run] '{name}' is already running.")
         return
     script = COMPONENTS[name]
-    argv = [sys.executable, os.path.join(HERE, script[0]), *script[1:]]
+    argv = [sys.executable, os.path.join(SRC, script[0]), *script[1:]]
     # Own process group + no stdin (stdin is reserved for the controller)
     procs[name] = subprocess.Popen(argv, start_new_session=True, stdin=subprocess.DEVNULL)
     print(f"[run] > start '{name}' (pid {procs[name].pid})")

@@ -6,8 +6,8 @@ from tqdm import tqdm
 from ultralytics import YOLO
 import supervision as sv
 
-# --- CẤU HÌNH ---
-# Neo các đường dẫn vào gốc repo (cha của local/) để chạy được từ bất kỳ thư mục nào.
+# --- CONFIG ---
+# Anchor paths to the project root (parent of local/) so it runs from any directory.
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 VIDEO_SOURCES = {
@@ -22,9 +22,9 @@ MODEL_PATHS = {
     "cam3": os.path.join(_ROOT, "weights", "cam1.pt"),
 }
 
-OUTPUT_DIR = os.path.join(_ROOT, "results")  # Folder chứa kết quả
+OUTPUT_DIR = os.path.join(_ROOT, "results")  # output folder
 
-# Tracker Config (Cần giống Consumer để sát thực tế)
+# Tracker config (kept the same as the consumers to stay realistic)
 CONF_THRESHOLD = 0.5
 IOU_THRESHOLD = 0.5
 TRACK_THRESH = 0.2
@@ -33,10 +33,10 @@ BUFFER_SIZE = 60
 
 class MOTResultWriter:
     def __init__(self, output_path):
-        # Tự động tạo thư mục cha nếu chưa có
+        # Create the parent directory if it does not exist
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         self.file = open(output_path, 'w')
-        print(f"📄 Đang ghi log vào: {output_path}")
+        print(f"Writing results to: {output_path}")
 
     def write(self, frame_idx, track_id, xyxy, conf=1.0):
         x1, y1, x2, y2 = xyxy
@@ -50,14 +50,14 @@ class MOTResultWriter:
         self.file.close()
 
 def process_camera(cam_name, video_path, model_path):
-    print(f"\n>>> 🎥 XỬ LÝ: {cam_name} | Model: {model_path}")
-    
+    print(f"\n>>> Processing: {cam_name} | Model: {model_path}")
+
     if not os.path.exists(video_path):
-        print(f"❌ Không tìm thấy video: {video_path}")
+        print(f"Video not found: {video_path}")
         return
 
     model = YOLO(model_path)
-    
+
     # Init ByteTrack
     tracker = sv.ByteTrack(
         track_activation_threshold=TRACK_THRESH,
@@ -71,15 +71,15 @@ def process_camera(cam_name, video_path, model_path):
 
     cap = cv2.VideoCapture(video_path)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    frame_idx = 0 
-    
-    # Dùng tqdm để hiện thanh tiến trình
+    frame_idx = 0
+
+    # tqdm for a progress bar
     with tqdm(total=total_frames, unit="frame") as pbar:
         while True:
             ret, frame = cap.read()
             if not ret: break
-            
-            frame_idx += 1 # Frame bắt đầu từ 1
+
+            frame_idx += 1  # frames are 1-based
 
             # 1. Detect
             results = model(frame, verbose=False, conf=CONF_THRESHOLD, iou=IOU_THRESHOLD)[0]
@@ -92,29 +92,29 @@ def process_camera(cam_name, video_path, model_path):
             confs = detections.confidence if detections.confidence is not None else [1.0] * len(detections)
             for xyxy, tid, conf in zip(detections.xyxy, detections.tracker_id, confs):
                 writer.write(frame_idx, tid, xyxy, conf)
-            
+
             pbar.update(1)
 
     cap.release()
     writer.close()
-    print(f"✅ Xong {cam_name}.")
+    print(f"Done {cam_name}.")
 
 def main():
-    # Bước 1: Chạy Tracking
+    # Step 1: run tracking
     for cam, v_path in VIDEO_SOURCES.items():
         m_path = MODEL_PATHS.get(cam, "yolov8n.pt")
         process_camera(cam, v_path, m_path)
 
-    # Bước 2: Tự động chạy đánh giá
+    # Step 2: run evaluation automatically
     print("\n" + "="*40)
-    print("🚀 CHUYỂN SANG ĐÁNH GIÁ (EVALUATION)...")
+    print("SWITCHING TO EVALUATION...")
     print("="*40)
-    
+
     eval_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "eval_metrics.py")
     if os.path.exists(eval_script):
         os.system(f"{sys.executable} {eval_script}")
     else:
-        print("❌ Không tìm thấy file eval_metrics.py để chạy đánh giá.")
+        print("eval_metrics.py not found; cannot run evaluation.")
 
 if __name__ == "__main__":
     main()
