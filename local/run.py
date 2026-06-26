@@ -90,6 +90,42 @@ def _log(level, msg, **fields):
         print(f"[run] {msg}")
 
 
+def ensure_topics(broker, topics):
+    """Create every pipeline topic up front (idempotent) so no consumer ever
+    subscribes to a not-yet-existing topic. Without this, a topic created lazily by
+    the first producer (e.g. cam1's reid_gallery_stream) isn't seen by already-
+    subscribed consumers until librdkafka's 5-minute metadata refresh -- with
+    auto.offset.reset=latest they miss everything in between (0 matches)."""
+    from confluent_kafka.admin import AdminClient, NewTopic
+
+    admin = AdminClient({"bootstrap.servers": broker})
+    try:
+        existing = set(admin.list_topics(timeout=10).topics.keys())
+    except Exception as e:
+        _log("error", "could not reach broker to pre-create topics", event="topics_error",
+             broker=broker, error=str(e))
+        return False
+
+    todo = [t for t in topics if t not in existing]
+    if not todo:
+        _log("info", "all topics already present", event="topics_ready", topics=list(topics))
+        return True
+
+    futures = admin.create_topics([NewTopic(t, num_partitions=1, replication_factor=1) for t in todo])
+    ok = True
+    for t, fut in futures.items():
+        try:
+            fut.result()
+            _log("info", f"created topic '{t}'", event="topic_created", topic=t)
+        except Exception as e:
+            if "already exists" in str(e).lower():  # raced with broker auto-create
+                _log("info", f"topic '{t}' already exists", event="topic_exists", topic=t)
+            else:
+                ok = False
+                _log("error", f"failed to create topic '{t}'", event="topic_error", topic=t, error=str(e))
+    return ok
+
+
 def _pump(name, stream, fobj):
     """Tee one child's merged stdout/stderr to its .out file and this terminal."""
     prefix = f"[{name}] "
@@ -362,8 +398,12 @@ def main():
         os.environ["REID_HEADLESS"] = "1"  # disable OpenCV windows in every component
 
     sys.path.insert(0, SRC)
+    import config
     from log_utils import setup_logging
     run_log = setup_logging("run")
+
+    # Pre-create all Kafka topics before launching consumers (see ensure_topics).
+    ensure_topics(config.BROKER, config.TOPICS)
 
     # Start the watchdog before launching anything so an early crash is caught.
     watcher = threading.Thread(target=_watch_loop, daemon=True)

@@ -26,7 +26,11 @@ def get_kafka_consumer(broker, group_id, topics):
         'bootstrap.servers': broker,
         'group.id': group_id,
         'auto.offset.reset': 'latest',
-        'fetch.min.bytes': 10000 
+        'fetch.min.bytes': 10000,
+        # Defense in depth: if a subscribed topic is created lazily (after subscribe),
+        # discover it within ~10s instead of librdkafka's 5-minute default. run.py
+        # pre-creates topics so this should rarely bite, but it bounds the worst case.
+        'topic.metadata.refresh.interval.ms': 10000,
     })
     c.subscribe(topics)
     return c

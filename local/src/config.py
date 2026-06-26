@@ -29,6 +29,12 @@ TOPIC_VIDEO = "video_reid_stream"
 TOPIC_GALLERY = "reid_gallery_stream"
 TOPIC_MATCH = "reid_matches"
 
+# Every topic the pipeline uses. run.py pre-creates these before launching any
+# component so consumers never subscribe to a not-yet-existing topic (which, with
+# auto.offset.reset=latest, makes them miss messages until librdkafka's slow
+# metadata refresh finally discovers the lazily-created topic).
+TOPICS = (TOPIC_VIDEO, TOPIC_GALLERY, TOPIC_MATCH)
+
 # --- CONSUMER GROUP IDS ---
 GROUP_CAM1 = "cam1_service_v2"
 GROUP_CAM2 = "cam2_service_v2"
