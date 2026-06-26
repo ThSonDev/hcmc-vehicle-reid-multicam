@@ -66,6 +66,18 @@ def run_cam2():
 
     try:
         while True:
+            # Heartbeat first, on wall-clock time: fires even when no frames arrive,
+            # so a frame-starved consumer still proves it's alive (fps reads 0) instead
+            # of looking dead in the logs.
+            now = time.time()
+            if now - last_hb >= HEARTBEAT_SEC:
+                fps = (frame_count - hb_frame_mark) / (now - last_hb)
+                log.info("Cam2 stats", extra={"event": "heartbeat", "fps": round(fps, 1),
+                                              "frames": frame_count, "matches": match_count,
+                                              "gallery_size": len(gallery_db)})
+                last_hb = now
+                hb_frame_mark = frame_count
+
             msg = consumer.poll(0.02)
             if msg is None:
                 continue
@@ -180,16 +192,6 @@ def run_cam2():
                             cv2.putText(frame, f"ID_C1: {locked_cam2_map[tid]}", (x1, y1 - 10),
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
                             cv2.rectangle(frame, (x1, y1), (int(xyxy[2]), int(xyxy[3])), (0, 255, 0), 2)
-
-                # Heartbeat
-                now = time.time()
-                if now - last_hb >= HEARTBEAT_SEC:
-                    fps = (frame_count - hb_frame_mark) / (now - last_hb)
-                    log.info("Cam2 stats", extra={"event": "heartbeat", "fps": round(fps, 1),
-                                                  "frames": frame_count, "matches": match_count,
-                                                  "gallery_size": len(gallery_db)})
-                    last_hb = now
-                    hb_frame_mark = frame_count
 
                 gui.imshow("Cam 2", frame)
                 if gui.waitKey(1) == ord('q'):

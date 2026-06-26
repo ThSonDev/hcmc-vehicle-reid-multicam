@@ -78,6 +78,18 @@ def run_cam1():
 
     try:
         while True:
+            # Heartbeat first, on wall-clock time: fires even when no frames arrive,
+            # so a frame-starved consumer still proves it's alive (fps reads 0) instead
+            # of looking dead in the logs.
+            now = time.time()
+            if now - last_hb >= HEARTBEAT_SEC:
+                fps = (frame_count - hb_frame_mark) / (now - last_hb)
+                log.info("Cam1 stats", extra={"event": "heartbeat", "fps": round(fps, 1),
+                                              "frames": frame_count, "gallery_sent": sent_count,
+                                              "tracks": len(cam1_last_sent)})
+                last_hb = now
+                hb_frame_mark = frame_count
+
             msg = consumer.poll(0.01)
             if msg is None:
                 continue
@@ -170,16 +182,6 @@ def run_cam1():
                             log.debug("Gallery sent", extra={"event": "gallery_send", "track_id": tid})
 
                     producer.poll(0)
-
-            # Heartbeat
-            now = time.time()
-            if now - last_hb >= HEARTBEAT_SEC:
-                fps = (frame_count - hb_frame_mark) / (now - last_hb)
-                log.info("Cam1 stats", extra={"event": "heartbeat", "fps": round(fps, 1),
-                                              "frames": frame_count, "gallery_sent": sent_count,
-                                              "tracks": len(cam1_last_sent)})
-                last_hb = now
-                hb_frame_mark = frame_count
 
             # UI
             if detections_display:

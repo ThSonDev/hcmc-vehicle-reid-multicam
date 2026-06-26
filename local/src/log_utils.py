@@ -15,6 +15,7 @@ import sys
 import json
 import logging
 import datetime
+import faulthandler
 from logging.handlers import RotatingFileHandler
 
 # Standard LogRecord attributes -> used to separate the "extra" fields we add.
@@ -49,6 +50,38 @@ _RUN_STAMP = os.environ.get("REID_LOG_STAMP") or datetime.datetime.now().strftim
 
 def _extras(record):
     return {k: v for k, v in record.__dict__.items() if k not in _RESERVED}
+
+
+_crash_installed = False
+
+
+def install_crash_handler(logger):
+    """Make abnormal deaths visible in the logs instead of vanishing to stderr.
+
+    - `sys.excepthook`: any uncaught Python exception is logged as a CRITICAL
+      `event=crash` record (with traceback) to the JSONL before the process dies,
+      then re-raised to the default hook so it still prints to stderr.
+    - `faulthandler`: native crashes (e.g. a CUDA/cuDNN segfault, which Python
+      can't catch) dump a C-level traceback to stderr — which run.py now captures.
+
+    Idempotent: installs once per process.
+    """
+    global _crash_installed
+    if _crash_installed:
+        return
+    _crash_installed = True
+
+    faulthandler.enable(all_threads=True)
+
+    _prev_hook = sys.excepthook
+
+    def _hook(etype, exc, tb):
+        if not issubclass(etype, KeyboardInterrupt):
+            logger.critical("Uncaught exception", exc_info=(etype, exc, tb),
+                            extra={"event": "crash", "error": str(exc)})
+        _prev_hook(etype, exc, tb)
+
+    sys.excepthook = _hook
 
 
 class JsonlFormatter(logging.Formatter):
@@ -87,12 +120,14 @@ class ConsoleFormatter(logging.Formatter):
         return line
 
 
-def setup_logging(component, level=logging.INFO, log_dir=None):
+def setup_logging(component, level=logging.INFO, log_dir=None, capture_crashes=True):
     """Return a configured logger for `component` (e.g. "cam1", "producer", "system").
 
     Calling repeatedly with the same component returns the same logger without
     attaching duplicate handlers. Console follows `level`; the JSONL file always
-    logs from DEBUG to keep full detail.
+    logs from DEBUG to keep full detail. When `capture_crashes` is set (default),
+    uncaught exceptions and native faults are routed to the logs (see
+    `install_crash_handler`) so a process can't die silently.
     """
     log_dir = log_dir or os.environ.get("REID_LOG_DIR") or os.path.join(_ROOT, "logs")
     logger = logging.getLogger(component)
@@ -118,5 +153,8 @@ def setup_logging(component, level=logging.INFO, log_dir=None):
         logger.addHandler(fh)
     except OSError as e:
         logger.warning("Could not create log file, console only", extra={"error": str(e)})
+
+    if capture_crashes:
+        install_crash_handler(logger)
 
     return logger

@@ -79,6 +79,18 @@ def run_cam3():
 
     try:
         while True:
+            # Heartbeat first, on wall-clock time: fires even when no frames arrive,
+            # so a frame-starved consumer still proves it's alive (fps reads 0) instead
+            # of looking dead in the logs.
+            now = time.time()
+            if now - last_hb >= HEARTBEAT_SEC:
+                fps = (frame_count - hb_frame_mark) / (now - last_hb)
+                log.info("Cam3 stats", extra={"event": "heartbeat", "fps": round(fps, 1),
+                                              "frames": frame_count, "matches": match_count,
+                                              "new": new_count, "tracking": len(best_track_buffer)})
+                last_hb = now
+                hb_frame_mark = frame_count
+
             msg = consumer.poll(0.02)
             if msg is None:
                 continue
@@ -271,16 +283,6 @@ def run_cam3():
                             cv2.putText(frame, f"ID:{tid} Area:{area}", (x1, y1 - 10), 0, 0.5, (255, 255, 0), 1)
                         elif tid in processed_cam3_ids:
                             cv2.putText(frame, f"ID:{tid} (Done)", (x1, y1 - 10), 0, 0.5, (100, 100, 100), 1)
-
-                # Heartbeat
-                now = time.time()
-                if now - last_hb >= HEARTBEAT_SEC:
-                    fps = (frame_count - hb_frame_mark) / (now - last_hb)
-                    log.info("Cam3 stats", extra={"event": "heartbeat", "fps": round(fps, 1),
-                                                  "frames": frame_count, "matches": match_count,
-                                                  "new": new_count, "tracking": len(best_track_buffer)})
-                    last_hb = now
-                    hb_frame_mark = frame_count
 
                 gui.imshow("Cam 3", frame)
                 if gui.waitKey(1) == ord('q'):

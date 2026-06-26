@@ -20,6 +20,13 @@ While running, type commands in this terminal:
 
 (Or press 'q' in a camera's OpenCV window to close just that one.)
 
+Robustness: each component's stdout/stderr is teed to `logs/<stamp>_<component>.out`
+(and echoed to this terminal, prefixed with the component name), so a crash that
+bypasses the JSONL logger -- an uncaught exception or a native CUDA/cuDNN segfault --
+is still captured. A watchdog thread notices any component that dies unexpectedly,
+prints the cause (exit code / signal) and the tail of its output, and records it in
+`logs/<stamp>_run.jsonl`.
+
 Run from inside local/ with the venv active: `cd local && python run.py`
 (after `source .venv/bin/activate`, or `.venv/bin/python run.py`).
 """
@@ -29,12 +36,14 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 
 # Component scripts live in src/ (next to this file). Resolving them absolutely lets
 # run.py work regardless of the current working directory.
 HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(HERE, "src")
+LOG_DIR = os.path.join(HERE, "logs")
 
 # name -> argv passed to the interpreter
 COMPONENTS = {
@@ -51,13 +60,47 @@ COMPONENTS = {
 START_ORDER = ["monitor", "cam1", "cam2", "cam3", "viz", "producer"]
 
 STOP_TIMEOUT = 8.0  # seconds to wait for a clean exit before forcing
+TAIL_LINES = 25     # lines of captured output to show when a component dies
 
-procs = {}  # name -> Popen
+procs = {}          # name -> Popen
+out_files = {}      # name -> open file object capturing its stdout/stderr
+out_paths = {}      # name -> path of that file
+pumps = {}          # name -> tee thread
+
+run_log = None      # structured run-level logger (set in main())
+
+# Watchdog state (guarded by _watch_lock).
+_watch_lock = threading.Lock()
+_expected = set()        # components we started and expect to stay alive
+_reported_dead = set()   # components whose death we've already reported
+_watcher_stop = threading.Event()
+_shutting_down = False
 
 
 def is_running(name):
     p = procs.get(name)
     return p is not None and p.poll() is None
+
+
+def _log(level, msg, **fields):
+    """Mirror an event to the run-level JSONL (if up) and the terminal."""
+    if run_log is not None:
+        getattr(run_log, level)(msg, extra=fields)
+    else:
+        print(f"[run] {msg}")
+
+
+def _pump(name, stream, fobj):
+    """Tee one child's merged stdout/stderr to its .out file and this terminal."""
+    prefix = f"[{name}] "
+    try:
+        for line in stream:
+            fobj.write(line)
+            fobj.flush()
+            sys.stdout.write(prefix + line)
+            sys.stdout.flush()
+    except (ValueError, OSError):
+        pass  # stream closed during shutdown
 
 
 def start(name):
@@ -66,8 +109,34 @@ def start(name):
         return
     script = COMPONENTS[name]
     argv = [sys.executable, os.path.join(SRC, script[0]), *script[1:]]
-    # Own process group + no stdin (stdin is reserved for the controller)
-    procs[name] = subprocess.Popen(argv, start_new_session=True, stdin=subprocess.DEVNULL)
+
+    out_path = os.path.join(LOG_DIR, f"{os.environ['REID_LOG_STAMP']}_{name}.out")
+    out_paths[name] = out_path
+    try:
+        os.makedirs(LOG_DIR, exist_ok=True)
+        fobj = open(out_path, "a", buffering=1, encoding="utf-8", errors="replace")
+    except OSError as e:
+        print(f"[run] WARN: cannot open {out_path} ({e}); capturing to terminal only.")
+        fobj = None
+
+    # Own process group + no stdin (stdin is reserved for the controller). Merge
+    # stderr into stdout and pipe both so we can tee them to file + terminal; this is
+    # what captures crashes that never reach the JSONL logger.
+    procs[name] = subprocess.Popen(
+        argv, start_new_session=True, stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, bufsize=1, errors="replace",
+    )
+    if fobj is not None:
+        out_files[name] = fobj
+        t = threading.Thread(target=_pump, args=(name, procs[name].stdout, fobj), daemon=True)
+        t.start()
+        pumps[name] = t
+
+    with _watch_lock:
+        _expected.add(name)
+        _reported_dead.discard(name)
+    _log("info", "component started", event="start", component=name, pid=procs[name].pid)
     print(f"[run] > start '{name}' (pid {procs[name].pid})")
 
 
@@ -77,8 +146,11 @@ def stop(name):
         return
     p = procs[name]
     pgid = os.getpgid(p.pid)
+    with _watch_lock:
+        _expected.discard(name)  # mark intentional so the watchdog stays quiet
     # SIGINT -> raises KeyboardInterrupt so the component cleans up (close consumer, log exit)
     print(f"[run] x stop '{name}' (pid {p.pid})...")
+    _log("info", "component stopping", event="stop", component=name, pid=p.pid)
     _signal_and_wait(p, pgid)
 
 
@@ -95,23 +167,105 @@ def _signal_and_wait(p, pgid):
             time.sleep(0.2)
 
 
+def _signal_name(rc):
+    """Map a negative Popen returncode to a signal name (e.g. -11 -> 'SIGSEGV')."""
+    try:
+        return signal.Signals(-rc).name
+    except ValueError:
+        return f"signal {-rc}"
+
+
+def _tail_out(name):
+    path = out_paths.get(name)
+    if not path or not os.path.exists(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            return f.readlines()[-TAIL_LINES:]
+    except OSError:
+        return []
+
+
+def _report_exit(name, rc):
+    """Announce (loudly, if abnormal) that a watched component has exited."""
+    if rc == 0:
+        _log("info", f"'{name}' exited normally", event="component_exit",
+             component=name, code=0)
+        print(f"[run] '{name}' exited normally (code 0).")
+        return
+
+    detail = _signal_name(rc) if rc < 0 else f"code {rc}"
+    sig = _signal_name(rc) if rc < 0 else ""
+    tail = _tail_out(name)
+    hint = ""
+    if rc == -signal.SIGSEGV or rc == -signal.SIGABRT:
+        hint = " (native crash -- likely CUDA/cuDNN/driver; see the tail + faulthandler dump)"
+    elif rc == -signal.SIGKILL:
+        hint = " (SIGKILL -- possibly OOM-killed; check `dmesg`/system log)"
+
+    print(f"\n[run] !! '{name}' DIED UNEXPECTEDLY ({detail}){hint}")
+    if out_paths.get(name):
+        print(f"[run]    full output: {out_paths[name]}")
+    if tail:
+        print(f"[run]    last {len(tail)} line(s):")
+        for ln in tail:
+            print(f"   | {ln.rstrip()}")
+    _log("error", f"'{name}' died unexpectedly", event="component_crash",
+         component=name, code=rc, signal=sig, tail="".join(tail)[-4000:])
+
+
+def _watch_loop():
+    """Poll every started component; report the first unexpected exit of each."""
+    while not _watcher_stop.wait(1.0):
+        if _shutting_down:
+            continue
+        with _watch_lock:
+            names = list(_expected)
+        for name in names:
+            p = procs.get(name)
+            if p is None:
+                continue
+            rc = p.poll()
+            if rc is None:
+                continue
+            with _watch_lock:
+                if name in _reported_dead:
+                    continue
+                _reported_dead.add(name)
+                _expected.discard(name)
+            _report_exit(name, rc)
+
+
 def status():
     print("[run] Status:")
     for name in START_ORDER:
         if name in procs:
             p = procs[name]
-            state = f"RUNNING (pid {p.pid})" if p.poll() is None else f"STOPPED (exit {p.returncode})"
+            if p.poll() is None:
+                state = f"RUNNING (pid {p.pid})"
+            else:
+                rc = p.returncode
+                state = f"STOPPED ({_signal_name(rc) if rc < 0 else f'exit {rc}'})"
         else:
             state = "-"
         print(f"   {name:10s} {state}")
 
 
 def shutdown_all():
+    global _shutting_down
+    _shutting_down = True
+    _watcher_stop.set()
     print("\n[run] Stopping everything...")
+    _log("info", "shutting down", event="shutdown")
     # producer first (stop feeding data), then the rest
     for name in reversed(START_ORDER):
         if is_running(name):
             stop(name)
+    for f in out_files.values():
+        try:
+            f.close()
+        except OSError:
+            pass
     print("[run] Stopped. Bye.")
 
 
@@ -165,6 +319,8 @@ def control_loop():
 
 
 def main():
+    global run_log
+
     ap = argparse.ArgumentParser(description="Orchestrate the local ReID pipeline.")
     ap.add_argument("--only", help="Run only these components (comma-separated)")
     ap.add_argument("--exclude", help="Skip these components (comma-separated)")
@@ -197,13 +353,24 @@ def main():
     if not selected:
         ap.error("No components selected to run.")
 
-    # Shared per-run stamp so all components log to logs/<stamp>_<component>.jsonl
+    # Shared per-run stamp so all components log to logs/<stamp>_<component>.jsonl.
+    # Must be set before importing log_utils (it reads REID_LOG_STAMP at import time).
     os.environ["REID_LOG_STAMP"] = datetime.datetime.now().strftime("%H-%M-%S_%d-%m-%Y")
     if args.once:
         os.environ["REID_REPLAY"] = "0"  # producer streams a single pass then stops
     if args.headless:
         os.environ["REID_HEADLESS"] = "1"  # disable OpenCV windows in every component
 
+    sys.path.insert(0, SRC)
+    from log_utils import setup_logging
+    run_log = setup_logging("run")
+
+    # Start the watchdog before launching anything so an early crash is caught.
+    watcher = threading.Thread(target=_watch_loop, daemon=True)
+    watcher.start()
+
+    _log("info", "orchestrator start", event="run_start", components=selected,
+         once=args.once, headless=args.headless)
     print(f"[run] Will run: {', '.join(selected)}")
     try:
         for name in selected:
@@ -222,6 +389,7 @@ def main():
         pass
     finally:
         shutdown_all()
+        _watcher_stop.set()
 
 
 if __name__ == "__main__":
