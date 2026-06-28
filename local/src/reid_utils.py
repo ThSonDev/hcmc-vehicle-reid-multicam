@@ -6,7 +6,9 @@ import numpy as np
 import cv2
 import supervision as sv
 import base64
+import json
 import os
+import time
 import logging
 from confluent_kafka import Consumer, Producer
 import torchreid
@@ -44,7 +46,87 @@ def decode_image_base64(b64_string):
     try:
         nparr = np.frombuffer(base64.b64decode(b64_string), np.uint8)
         return cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-    except: return None
+    except Exception: return None
+
+def decode_frame(msg):
+    """Decode a Kafka JPEG frame payload to a BGR image (None if undecodable)."""
+    nparr = np.frombuffer(msg.value(), np.uint8)
+    return cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+def parse_frame_meta(msg, default_frame_idx, logger):
+    """Read {timestamp, frame_idx} from the frame's Kafka header.
+
+    Falls back to wall-clock time and the caller's local counter when the header
+    is missing or malformed. Returns (timestamp, frame_idx); frame_idx is made
+    1-based (the producer counts from 0, GT starts at 1)."""
+    ts = time.time()
+    frame_idx = default_frame_idx
+    try:
+        headers = msg.headers()
+        if headers:
+            meta = json.loads(headers[0][1].decode())
+            ts = meta.get('timestamp', ts)
+            frame_idx = meta.get('frame_idx', default_frame_idx) + 1
+    except (json.JSONDecodeError, IndexError, AttributeError):
+        logger.debug("Could not read meta header, using time.time()", extra={"event": "meta_fallback"})
+    return ts, frame_idx
+
+def ingest_gallery_message(gallery_db, msg, logger):
+    """Insert/refresh a cam1 gallery entry from a reid_gallery_stream message."""
+    try:
+        data = json.loads(msg.value().decode())
+        gallery_db[data['track_id']] = {
+            'feat': np.array(data['feature'], dtype=np.float32),
+            'ts': data['timestamp'],
+            'img_b64': data.get('image_b64'),
+        }
+        return True
+    except (json.JSONDecodeError, KeyError):
+        logger.debug("Skipping malformed gallery message", extra={"event": "gallery_parse_error"})
+        return False
+
+def clamp_crop(frame, xyxy):
+    """Clamp an xyxy box to the frame bounds; return (crop, pixel_area)."""
+    h, w = frame.shape[:2]
+    x1, y1, x2, y2 = map(int, xyxy)
+    x1, y1 = max(0, x1), max(0, y1)
+    x2, y2 = min(w, x2), min(h, y2)
+    return frame[y1:y2, x1:x2], (x2 - x1) * (y2 - y1)
+
+def produce_event(producer, topic, payload, logger, key=None):
+    """Produce a JSON event, tolerating a full local queue (the 4 GB-GPU / DRAM-less
+    SSD pipeline backpressures). Returns False if the message was dropped."""
+    try:
+        producer.produce(topic, key=key, value=json.dumps(payload).encode())
+        return True
+    except BufferError:
+        logger.debug("Kafka buffer full, dropping message", extra={"event": "buffer_full"})
+        producer.poll(0.1)
+        return False
+
+
+class Heartbeat:
+    """Wall-clock heartbeat, evaluated at the top of the consume loop so a frame-starved
+    consumer still proves it is alive (fps=0) instead of looking dead in the logs."""
+    def __init__(self, logger, label, interval=5.0):
+        self.log = logger
+        self.label = label
+        self.interval = interval
+        self.last = time.time()
+        self.frame_mark = 0
+
+    def tick(self, frame_count, **stats):
+        """Emit a heartbeat if `interval` has elapsed; return True when it fired."""
+        now = time.time()
+        if now - self.last < self.interval:
+            return False
+        fps = (frame_count - self.frame_mark) / (now - self.last)
+        self.log.info(f"{self.label} stats",
+                      extra={"event": "heartbeat", "fps": round(fps, 1),
+                             "frames": frame_count, **stats})
+        self.last = now
+        self.frame_mark = frame_count
+        return True
 
 def merge_truck_boxes(detections, frame_shape):
     """Merge truck/bus boxes that YOLO split in two."""
@@ -209,6 +291,13 @@ class MOTResultWriter:
         self.file.write(line)
         # No per-line flush: rely on buffered I/O (flushed on close) to cut
         # disk writes / SSD wear. Results land on disk at consumer shutdown.
+
+    def write_detections(self, frame_idx, detections):
+        """Write every tracked box of a frame. ByteTrack drops confidence to None on
+        empty detections, so fall back to 1.0 to keep one code path across consumers."""
+        confs = detections.confidence if detections.confidence is not None else [1.0] * len(detections)
+        for xyxy, tid, conf in zip(detections.xyxy, detections.tracker_id, confs):
+            self.write(frame_idx, tid, xyxy, conf)
 
     def close(self):
         self.file.close()

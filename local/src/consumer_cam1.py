@@ -1,7 +1,4 @@
 import cv2
-import numpy as np
-import json
-import time
 import datetime
 from ultralytics import YOLO
 import supervision as sv
@@ -24,13 +21,15 @@ YOLO_MODEL_PATH = config.YOLO_CAM1
 OSNET_MODEL_PATH = config.OSNET_WEIGHTS
 
 # --- TUNING ---
-SKIP_FRAMES = 2
-YOLO_CONF = 0.50
-MIN_AREA_THRESHOLD = 800
-SEND_INTERVAL = 0.5
-TRACK_THRESH = 0.2
-MATCH_THRESH = 0.8
-DATA_FPS = 30
+SKIP_FRAMES = 2                 # run YOLO every (SKIP_FRAMES + 1)th frame
+YOLO_CONF = 0.50               # YOLO confidence threshold
+MIN_AREA_THRESHOLD = 800       # min crop area (px) to embed
+SEND_INTERVAL = 0.5            # min seconds between gallery publishes per track
+TRACK_THRESH = 0.2            # ByteTrack activation threshold
+MATCH_THRESH = 0.8           # ByteTrack matching threshold
+LOST_TRACK_BUFFER = 30      # ByteTrack frames a track survives while unseen
+DATA_FPS = 30               # source frame rate (for ByteTrack)
+POLL_TIMEOUT = 0.01         # Kafka poll timeout (s)
 HEARTBEAT_SEC = 5.0
 
 
@@ -54,7 +53,7 @@ def run_cam1():
     # Init Tracker
     tracker = sv.ByteTrack(
         track_activation_threshold=TRACK_THRESH,
-        lost_track_buffer=30,
+        lost_track_buffer=LOST_TRACK_BUFFER,
         minimum_matching_threshold=MATCH_THRESH,
         frame_rate=DATA_FPS
     )
@@ -71,26 +70,15 @@ def run_cam1():
     frame_count = 0
     sent_count = 0
     cam1_last_sent = {}  # cache: {track_id: timestamp}
-    last_hb = time.time()
-    hb_frame_mark = 0
+    hb = utils.Heartbeat(log, "Cam1", HEARTBEAT_SEC)
 
     log.info("Cam1 ready (gallery source)", extra={"event": "ready", "broker": BROKER})
 
     try:
         while True:
-            # Heartbeat first, on wall-clock time: fires even when no frames arrive,
-            # so a frame-starved consumer still proves it's alive (fps reads 0) instead
-            # of looking dead in the logs.
-            now = time.time()
-            if now - last_hb >= HEARTBEAT_SEC:
-                fps = (frame_count - hb_frame_mark) / (now - last_hb)
-                log.info("Cam1 stats", extra={"event": "heartbeat", "fps": round(fps, 1),
-                                              "frames": frame_count, "gallery_sent": sent_count,
-                                              "tracks": len(cam1_last_sent)})
-                last_hb = now
-                hb_frame_mark = frame_count
+            hb.tick(frame_count, gallery_sent=sent_count, tracks=len(cam1_last_sent))
 
-            msg = consumer.poll(0.01)
+            msg = consumer.poll(POLL_TIMEOUT)
             if msg is None:
                 continue
             if msg.error():
@@ -101,29 +89,14 @@ def run_cam1():
             if msg.key().decode() != "cam1":
                 continue
 
-            nparr = np.frombuffer(msg.value(), np.uint8)
-            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            frame = utils.decode_frame(msg)
             if frame is None:
                 continue
 
             frame_count += 1
+            ts_now, kafka_frame_idx = utils.parse_frame_meta(msg, frame_count, log)
 
-            # --- ACCURATE TIMESTAMP ---
-            ts_now = time.time()
-            kafka_frame_idx = frame_count
-            try:
-                headers = msg.headers()
-                if headers:
-                    meta = json.loads(headers[0][1].decode())
-                    ts_now = meta.get('timestamp', ts_now)
-                    # Producer sends frame_idx from 0, GT starts at 1
-                    kafka_frame_idx = meta.get('frame_idx', frame_count) + 1
-            except (json.JSONDecodeError, IndexError, AttributeError):
-                log.debug("Could not read meta header, using time.time()", extra={"event": "meta_fallback"})
-
-            dt_object = datetime.datetime.fromtimestamp(ts_now)
-            time_str = dt_object.strftime('%H:%M:%S.%f')[:-4]
-
+            time_str = datetime.datetime.fromtimestamp(ts_now).strftime('%H:%M:%S.%f')[:-4]
             detections_display = None
 
             if frame_count % (SKIP_FRAMES + 1) == 0:
@@ -135,33 +108,20 @@ def run_cam1():
                               extra={"event": "inference_error", "frame": frame_count})
                     continue
                 detections = sv.Detections.from_ultralytics(results)
-
-                # Use the helper from utils
                 detections = utils.merge_truck_boxes(detections, frame.shape)
                 detections = tracker.update_with_detections(detections)
                 detections_display = detections
 
-                for xyxy, tid, conf in zip(detections.xyxy, detections.tracker_id, detections.confidence):
-                    res_writer.write(kafka_frame_idx, tid, xyxy, conf)
+                res_writer.write_detections(kafka_frame_idx, detections)
 
-                # Prepare crops
-                crops = []
-                valid_indices = []
-
-                for i, (xyxy, tid) in enumerate(zip(detections.xyxy, detections.tracker_id)):
-                    x1, y1, x2, y2 = map(int, xyxy)
-                    h, w = frame.shape[:2]
-                    x1, y1 = max(0, x1), max(0, y1)
-                    x2, y2 = min(w, x2), min(h, y2)
-
-                    area = (x2 - x1) * (y2 - y1)
-
+                crops, valid_indices = [], []
+                for i, xyxy in enumerate(detections.xyxy):
+                    crop, area = utils.clamp_crop(frame, xyxy)
                     if area > MIN_AREA_THRESHOLD:
-                        crops.append(frame[y1:y2, x1:x2])
+                        crops.append(crop)
                         valid_indices.append(i)
 
                 if crops:
-                    # Call extract on the extractor instance
                     try:
                         embeddings = extractor.extract_batch(crops)
                     except Exception:
@@ -169,35 +129,22 @@ def run_cam1():
                                   extra={"event": "extract_error", "frame": frame_count})
                         continue
 
-                    for idx, feat_vec in zip(valid_indices, embeddings):
+                    for k, (idx, feat_vec) in enumerate(zip(valid_indices, embeddings)):
                         tid = int(detections.tracker_id[idx])
-                        last_sent_ts = cam1_last_sent.get(tid, 0)
-
-                        if ts_now - last_sent_ts > SEND_INTERVAL:
-                            payload = {
-                                "track_id": tid,
-                                "timestamp": ts_now,
-                                "feature": feat_vec.tolist(),
-                                "cam_id": "cam1",
-                                # Use the encode helper from utils
-                                "image_b64": utils.encode_image_base64(crops[valid_indices.index(idx)])
-                            }
-
-                            try:
-                                producer.produce(
-                                    TOPIC_GALLERY,
-                                    key=str(tid).encode(),
-                                    value=json.dumps(payload).encode()
-                                )
-                            except BufferError:
-                                # Queue full: drop this send, retry the track next interval
-                                log.debug("Kafka buffer full, dropping gallery msg",
-                                          extra={"event": "buffer_full", "track_id": tid})
-                                producer.poll(0.1)
-                                continue
-                            cam1_last_sent[tid] = ts_now
-                            sent_count += 1
-                            log.debug("Gallery sent", extra={"event": "gallery_send", "track_id": tid})
+                        if ts_now - cam1_last_sent.get(tid, 0) <= SEND_INTERVAL:
+                            continue
+                        payload = {
+                            "track_id": tid,
+                            "timestamp": ts_now,
+                            "feature": feat_vec.tolist(),
+                            "cam_id": "cam1",
+                            "image_b64": utils.encode_image_base64(crops[k]),
+                        }
+                        if not utils.produce_event(producer, TOPIC_GALLERY, payload, log, key=str(tid).encode()):
+                            continue  # queue full: retry this track next interval
+                        cam1_last_sent[tid] = ts_now
+                        sent_count += 1
+                        log.debug("Gallery sent", extra={"event": "gallery_send", "track_id": tid})
 
                     producer.poll(0)
 

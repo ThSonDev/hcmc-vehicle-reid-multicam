@@ -262,9 +262,11 @@ using its best image. This is the "best-shot buffering" idea:
    timestamp, and a `missing_count`. Each frame the vehicle is present resets
    `missing_count` to 0; if the current crop is bigger than the stored one, it replaces it.
    Largest box ≈ closest/clearest view, which gives the best embedding.
-2. **Detect exit.** Any buffered track *not* seen in the current frame has its
-   `missing_count` incremented. Once it exceeds `EXIT_FRAME_THRESHOLD` (20 frames without a
-   sighting) the vehicle is considered gone and moved to a `finished_tracks` list.
+2. **Detect exit.** Any buffered track *not* seen in the current **processed** frame has its
+   `missing_count` incremented. Once it exceeds `EXIT_FRAME_THRESHOLD` (20 processed frames —
+   with `SKIP_FRAMES=2` only 1 in 3 captured frames is processed, so ~60 captured frames ≈ 2s
+   at 30 fps, roughly ByteTrack's `lost_track_buffer`) the vehicle is considered gone and
+   moved to a `finished_tracks` list.
 3. **Match the finished tracks, once.** Their best crops are embedded in one batch and
    compared against the travel-time-filtered, unlocked gallery, exactly like cam2. If the
    best score clears `SIMILARITY_THRESHOLD` (0.5, lower than cam2's because the cam1→cam3
@@ -302,12 +304,32 @@ Beyond `merge_truck_boxes`, two classes carry most of the shared consumer logic:
   written in 640 coordinates and the res→GT scaling happens later at evaluation time (see the
   resolution discussion above).
 
+The logic the three consumers used to copy-paste also lives here as small helpers, so the
+cameras share one implementation and can't drift apart:
+
+- `decode_frame(msg)` — JPEG payload → BGR image (`None` if undecodable).
+- `parse_frame_meta(msg, frame_count, log)` — reads `{timestamp, frame_idx}` from the Kafka
+  header, guarding `if msg.headers():` and falling back to the wall clock; returns a 1-based
+  `frame_idx`.
+- `ingest_gallery_message(gallery_db, msg, log)` — inserts/refreshes a cam1 gallery entry.
+- `clamp_crop(frame, xyxy)` — clamps a box to the frame and returns `(crop, area)` (the one
+  crop+area-filter path for all cameras).
+- `produce_event(producer, topic, payload, log, key=None)` — JSON-encodes and produces an
+  event, swallowing `BufferError` (returns `False` if dropped, which cam1 uses to retry).
+- `Heartbeat` — wall-clock `tick()` that emits the periodic `event=heartbeat` (fps + per-cam
+  counts) at the top of the loop.
+
 The Kafka helpers (`get_kafka_consumer` / `get_kafka_producer`) and the base64 image
 codecs (`encode_image_base64` / `decode_image_base64`) also live here. The consumer config
 sets `auto.offset.reset=latest` (read only new frames) and a 10s
 `topic.metadata.refresh.interval.ms` as a backstop, so a lazily-created topic is discovered
 in ~10s instead of librdkafka's 5-minute default — defence in depth behind `run.py`'s
 topic pre-creation.
+
+Each consumer keeps only its own **named tuning constants** at the top of the file
+(`SKIP_FRAMES`, `YOLO_CONF`, `MIN_AREA_THRESHOLD`, `TRACK_THRESH`, `LOST_TRACK_BUFFER`,
+`POLL_TIMEOUT`, the travel-time gates, …) — same convention across all three, no inline
+magic numbers.
 
 ### Staying alive: per-frame fault isolation
 
@@ -322,12 +344,12 @@ the granularity of one frame or one message:
   (`event=inference_error` / `extract_error`) and **skips just that frame**, then carries on
   with the next one instead of crashing. For cam3 a failed extraction leaves the finished
   tracks in the buffer, so they are simply retried on the next pass.
-- **Sends tolerate a full queue.** Every `producer.produce` is wrapped in
-  `except BufferError` (the same pattern the producer uses): if the local librdkafka queue
-  is momentarily full it logs `event=buffer_full`, polls briefly to let the queue drain, and
-  moves on rather than aborting. cam1 additionally retries the dropped gallery send on the
-  next interval; the low-volume match/new-vehicle events are simply skipped.
-- **Headers are read defensively.** All three cameras now guard `if msg.headers():` before
+- **Sends tolerate a full queue.** All sends go through `produce_event`, which catches
+  `BufferError`: if the local librdkafka queue is momentarily full it logs `event=buffer_full`,
+  polls briefly to let the queue drain, and moves on rather than aborting. cam1 retries the
+  dropped gallery send on the next interval (it checks the helper's return value); the
+  low-volume match/new-vehicle events are simply skipped.
+- **Headers are read defensively.** `parse_frame_meta` guards `if msg.headers():` before
   decoding the `meta` header, so an error or header-less message can't raise on `None[0]` and
   kill the loop — it just falls back to the local clock.
 - **Producers flush on shutdown.** Each consumer calls `producer.flush(timeout=5.0)` in its

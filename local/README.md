@@ -175,13 +175,21 @@ looking dead — handy when diagnosing whether a component crashed or just got n
 
 The consumers also **degrade instead of dying** on the common transient faults:
 per-frame YOLO/OSNet inference is wrapped so a corrupt frame or a CUDA OOM (the 4 GB GPU)
-just skips that frame (`event=inference_error` / `extract_error`) and keeps going; every
-`producer.produce` tolerates a full local queue (`event=buffer_full`); and each consumer
-`producer.flush()`es and `res_writer.close()`s on shutdown so the last match/gallery events
-are delivered and the buffered `results/res_cam*.txt` lines are flushed to disk, not lost.
-(`MOTResultWriter` no longer flushes per line — it relies on buffered I/O flushed at close,
-to cut disk writes / SSD wear; run `--once` for a clean shutdown before `report.py --eval`.)
-Grep these events in the JSONL to see whether a run hit GPU pressure or Kafka backpressure.
+just skips that frame (`event=inference_error` / `extract_error`) and keeps going; sends go
+through `reid_utils.produce_event`, which tolerates a full local queue (`event=buffer_full`);
+and each consumer `producer.flush()`es and `res_writer.close()`s on shutdown so the last
+match/gallery events are delivered and the buffered `results/res_cam*.txt` lines are flushed
+to disk, not lost. (`MOTResultWriter` no longer flushes per line — it relies on buffered I/O
+flushed at close, to cut disk writes / SSD wear; run `--once` for a clean shutdown before
+`report.py --eval`.) Grep these events in the JSONL to see whether a run hit GPU pressure or
+Kafka backpressure.
+
+The logic the three consumers share — frame decode, Kafka-header parsing, gallery ingestion,
+crop+area filtering, event publishing, heartbeats — lives as helpers in `reid_utils.py`
+(`decode_frame`, `parse_frame_meta`, `ingest_gallery_message`, `clamp_crop`, `produce_event`,
+`Heartbeat`), so the cameras stay behaviorally consistent. Each consumer keeps only its own
+**named tuning constants** at the top of the file (`SKIP_FRAMES`, `YOLO_CONF`,
+`MIN_AREA_THRESHOLD`, travel-time gates, …) — no inline magic numbers.
 
 ## Evaluate against ground truth
 

@@ -1,6 +1,5 @@
 import cv2
 import numpy as np
-import json
 import time
 from ultralytics import YOLO
 import supervision as sv
@@ -22,8 +21,17 @@ GROUP_ID = config.GROUP_CAM2
 YOLO_MODEL = config.YOLO_CAM2
 OSNET_MODEL = config.OSNET_WEIGHTS
 
-SIMILARITY_THRESHOLD = 0.65
-MIN_TRAVEL_TIME = 1.0
+# --- TUNING ---
+SKIP_FRAMES = 2               # run YOLO every (SKIP_FRAMES + 1)th frame
+YOLO_CONF = 0.5              # YOLO confidence threshold
+MIN_AREA_THRESHOLD = 800    # min crop area (px) to query
+TRACK_THRESH = 0.2          # ByteTrack activation threshold
+LOST_TRACK_BUFFER = 60      # ByteTrack frames a track survives while unseen
+DATA_FPS = 30               # source frame rate (for ByteTrack)
+POLL_TIMEOUT = 0.02         # Kafka poll timeout (s)
+
+SIMILARITY_THRESHOLD = 0.65   # cosine-similarity bar for a cam2<->cam1 match
+MIN_TRAVEL_TIME = 1.0         # cam1->cam2 travel-time gate (s)
 MAX_TRAVEL_TIME = 10
 HEARTBEAT_SEC = 5.0
 
@@ -71,7 +79,8 @@ def run_cam2():
         logger=log,
     )
 
-    tracker = sv.ByteTrack(track_activation_threshold=0.2, lost_track_buffer=60, frame_rate=30)
+    tracker = sv.ByteTrack(track_activation_threshold=TRACK_THRESH,
+                           lost_track_buffer=LOST_TRACK_BUFFER, frame_rate=DATA_FPS)
     box_an = sv.BoxAnnotator(thickness=2)
 
     gallery_db = {}
@@ -80,31 +89,19 @@ def run_cam2():
 
     frame_count = 0
     match_count = 0
-    last_hb = time.time()
-    hb_frame_mark = 0
+    hb = utils.Heartbeat(log, "Cam2", HEARTBEAT_SEC)
 
     log.info("Cam2 ready (frame-by-frame matcher)", extra={"event": "ready", "broker": BROKER})
 
     try:
         while True:
-            # Heartbeat first, on wall-clock time: fires even when no frames arrive,
-            # so a frame-starved consumer still proves it's alive (fps reads 0) instead
-            # of looking dead in the logs.
-            now = time.time()
-            if now - last_hb >= HEARTBEAT_SEC:
-                fps = (frame_count - hb_frame_mark) / (now - last_hb)
-                log.info("Cam2 stats", extra={"event": "heartbeat", "fps": round(fps, 1),
-                                              "frames": frame_count, "matches": match_count,
-                                              "gallery_size": len(gallery_db),
-                                              "locks": len(locked_cam2_map)})
-                last_hb = now
-                hb_frame_mark = frame_count
-                # Periodic, frame-rate-independent sweep: keeps gallery_db and the
-                # lock tables bounded on long / looping runs (also bounds the O(N)
-                # gallery scan below to the active window).
-                evict_stale_state(gallery_db, locked_cam1_ids, locked_cam2_map, now)
+            if hb.tick(frame_count, matches=match_count, gallery_size=len(gallery_db),
+                       locks=len(locked_cam2_map)):
+                # Frame-rate-independent sweep keeps gallery_db and the lock tables
+                # bounded on long/looping runs (also bounds the O(N) gallery scan below).
+                evict_stale_state(gallery_db, locked_cam1_ids, locked_cam2_map, time.time())
 
-            msg = consumer.poll(0.02)
+            msg = consumer.poll(POLL_TIMEOUT)
             if msg is None:
                 continue
             if msg.error():
@@ -112,40 +109,21 @@ def run_cam2():
                 continue
 
             if msg.topic() == TOPIC_GALLERY:
-                try:
-                    data = json.loads(msg.value().decode())
-                    # Insert/refresh; stale entries are pruned by evict_stale_state()
-                    gallery_db[data['track_id']] = {
-                        'feat': np.array(data['feature'], dtype=np.float32),
-                        'ts': data['timestamp'],
-                        'img_b64': data.get('image_b64')
-                    }
-                except (json.JSONDecodeError, KeyError):
-                    log.debug("Skipping malformed gallery message", extra={"event": "gallery_parse_error"})
+                utils.ingest_gallery_message(gallery_db, msg, log)
                 continue
 
             if msg.topic() == TOPIC_VIDEO and msg.key().decode() == "cam2":
-                nparr = np.frombuffer(msg.value(), np.uint8)
-                frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                frame = utils.decode_frame(msg)
                 if frame is None:
                     continue
 
                 frame_count += 1
-                ts_now = time.time()
-                kafka_frame_idx = frame_count
-                try:
-                    if msg.headers():
-                        meta = json.loads(msg.headers()[0][1].decode())
-                        ts_now = meta.get('timestamp', ts_now)
-                        # Producer sends frame_idx from 0, GT starts at 1
-                        kafka_frame_idx = meta.get('frame_idx', frame_count) + 1
-                except (json.JSONDecodeError, IndexError, AttributeError):
-                    log.debug("Could not read meta header", extra={"event": "meta_fallback"})
+                ts_now, kafka_frame_idx = utils.parse_frame_meta(msg, frame_count, log)
 
-                if frame_count % 3 == 0:
+                if frame_count % (SKIP_FRAMES + 1) == 0:
                     # Isolate inference: a corrupt frame or CUDA OOM skips this frame, not the run
                     try:
-                        results = model(frame, verbose=False, conf=0.5)[0]
+                        results = model(frame, verbose=False, conf=YOLO_CONF)[0]
                     except Exception:
                         log.error("YOLO inference failed, skipping frame", exc_info=True,
                                   extra={"event": "inference_error", "frame": frame_count})
@@ -154,21 +132,16 @@ def run_cam2():
                     detections = utils.merge_truck_boxes(detections, frame.shape)
                     detections = tracker.update_with_detections(detections)
 
-                    for xyxy, tid, conf in zip(detections.xyxy, detections.tracker_id, detections.confidence):
-                        res_writer.write(kafka_frame_idx, tid, xyxy, conf)
+                    res_writer.write_detections(kafka_frame_idx, detections)
 
-                    # Matching logic
+                    # Query the unmatched, large-enough detections against the gallery
                     query_crops, query_indices = [], []
                     for i, (xyxy, tid) in enumerate(zip(detections.xyxy, detections.tracker_id)):
-                        tid = int(tid)
-                        if tid in locked_cam2_map:
-                            continue  # skip if already matched
-
-                        x1, y1, x2, y2 = map(int, xyxy)
-                        if (x2 - x1) * (y2 - y1) < 800:
+                        if int(tid) in locked_cam2_map:
                             continue
-
-                        crop = frame[max(0, y1):min(frame.shape[0], y2), max(0, x1):min(frame.shape[1], x2)]
+                        crop, area = utils.clamp_crop(frame, xyxy)
+                        if area < MIN_AREA_THRESHOLD:
+                            continue
                         query_crops.append(crop)
                         query_indices.append(i)
 
@@ -200,26 +173,21 @@ def run_cam2():
                                 if score > SIMILARITY_THRESHOLD and matched_c1_id not in locked_cam1_ids:
                                     c2_tid = int(detections.tracker_id[query_indices[q_idx]])
 
-                                    # Lock (timestamped so it can be evicted later)
+                                    # Lock both IDs (timestamped so they can be evicted) so
+                                    # each cam1 vehicle is claimed by one cam2 track only.
                                     locked_cam1_ids[matched_c1_id] = ts_now
                                     locked_cam2_map[c2_tid] = {'cam1_id': matched_c1_id, 'ts': ts_now}
 
-                                    # Send event (cam_source="cam2")
                                     evt = {
-                                        "cam_source": "cam2",  # mark the source
+                                        "cam_source": "cam2",
                                         "cam1_id": matched_c1_id,
-                                        "match_id": c2_tid,   # ID at cam2
+                                        "match_id": c2_tid,
                                         "score": float(score),
                                         "timestamp": ts_now,
                                         "cam1_b64": gallery_db[matched_c1_id]['img_b64'],
-                                        "match_b64": utils.encode_image_base64(query_crops[q_idx])
+                                        "match_b64": utils.encode_image_base64(query_crops[q_idx]),
                                     }
-                                    try:
-                                        producer.produce(TOPIC_MATCH, json.dumps(evt).encode())
-                                    except BufferError:
-                                        log.debug("Kafka buffer full, dropping match msg",
-                                                  extra={"event": "buffer_full"})
-                                        producer.poll(0.1)
+                                    utils.produce_event(producer, TOPIC_MATCH, evt, log)
                                     match_count += 1
                                     log.info("Match cam2 <-> cam1",
                                              extra={"event": "match", "cam2_id": c2_tid,
