@@ -165,6 +165,14 @@ Every component logs to the console **and** to a structured `logs/<stamp>_<compo
 `jq 'select(.event=="match")' logs/<stamp>_cam2.jsonl`, or just run `report.py`. `run.py`
 exports one shared `<stamp>` per launch so every component of a run logs together.
 
+`run.py` additionally tees each component's raw stdout/stderr to
+`logs/<stamp>_<component>.out` and writes orchestrator events to
+`logs/<stamp>_run.jsonl` — including any component that dies unexpectedly, with its exit
+signal (e.g. `SIGSEGV`/`SIGABRT`) and the tail of its output. This captures crashes that
+never reach the JSONL logger (an uncaught exception, or a native CUDA/Qt abort). Heartbeats
+fire on wall-clock time, so a frame-starved consumer still beats with `fps=0` rather than
+looking dead — handy when diagnosing whether a component crashed or just got no data.
+
 ## Evaluate against ground truth
 
 ```bash
@@ -202,6 +210,10 @@ slate (e.g. reruns within a couple of minutes, or to reclaim disk):
 docker compose down -v   # wipe broker data + committed offsets
 docker compose up -d
 ```
+
+`run.py` pre-creates every topic at startup, so even a freshly wiped (cold) broker is safe
+— consumers subscribe to topics that already exist and so don't miss cam1's gallery on the
+first frames (which previously caused a ~5-minute stall and 0 matches).
 
 Result files (`results/res_cam*.txt`) are truncated each run, but only for the cameras that
 actually ran — run a full 3-camera `--once` before trusting `report.py --eval`.
