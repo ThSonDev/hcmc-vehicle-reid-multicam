@@ -30,7 +30,7 @@ producer ──▶ video_reid_stream ──▶ cam1  ──▶ reid_gallery_stre
 ```
 
 - **cam1** — source only; detects/tracks and publishes per-track embeddings to the gallery.
-- **cam2** — matches frame-by-frame against the cam1 gallery (travel-time gated; one cam1 id used once).
+- **cam2** — matches frame-by-frame against the cam1 gallery (travel-time gated; one cam1 id used once). A periodic timestamp-based sweep (`evict_stale_state`, ~every heartbeat) evicts stale gallery entries **and** ID locks so memory stays bounded on long/looping runs and ids free up for reuse (same policy as cam3, extended to cam2's lock tables).
 - **cam3** — buffers a "best shot" per track and matches on track exit; emits *new vehicle* when no match (it sits on a new road).
 - **visualizer** — joins match events into one row per source vehicle.
 - **monitor** — samples CPU/GPU/RAM/disk to `logs/`.

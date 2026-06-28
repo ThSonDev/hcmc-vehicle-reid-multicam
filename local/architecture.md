@@ -209,8 +209,9 @@ GPU efficient.
 ### cam2 — frame-by-frame matcher
 
 cam2 keeps a local copy of cam1's gallery in `gallery_db`, keyed by cam1 track id, holding
-each vehicle's latest embedding, timestamp, and crop image. Gallery messages only ever
-**update** entries here; cam2 never deletes from it.
+each vehicle's latest embedding, timestamp, and crop image. Gallery messages **update**
+entries here; a periodic eviction sweep (see "Long-run state eviction" below) drops entries
+once they age past the travel-time window so the table stays bounded.
 
 For its own vehicles, cam2 matches **on every processed frame** (the front-vs-back views
 mean the same vehicle can look quite different, so it keeps trying as the vehicle crosses).
@@ -227,13 +228,24 @@ The logic:
    vehicle, take its best gallery candidate. If that score clears
    `SIMILARITY_THRESHOLD` (0.65) and the cam1 id isn't already locked, it's a match.
 
-**Locking** is what keeps matches one-to-one: on a match cam2 adds the cam1 id to
-`locked_cam1_ids` and records `locked_cam2_map[cam2_track] = cam1_id`. After that, the cam1
-vehicle can't be claimed by another cam2 track, and the cam2 track stops querying. Each
-match is published to `reid_matches` as `{cam_source:"cam2", cam1_id, match_id, score,
-timestamp, cam1_b64, match_b64}` and drawn on screen with the matched cam1 id over the box.
-Because cam1 and cam2 are on the same one-way road with no entrance between them, cam2
-assumes every vehicle eventually has a match and never reports "new".
+**Locking** is what keeps matches one-to-one: on a match cam2 stamps the cam1 id into
+`locked_cam1_ids` (now a `{cam1_id: lock_ts}` map) and records
+`locked_cam2_map[cam2_track] = {cam1_id, ts}`. After that, the cam1 vehicle can't be claimed
+by another cam2 track, and the cam2 track stops querying. Each match is published to
+`reid_matches` as `{cam_source:"cam2", cam1_id, match_id, score, timestamp, cam1_b64,
+match_b64}` and drawn on screen with the matched cam1 id over the box. Because cam1 and cam2
+are on the same one-way road with no entrance between them, cam2 assumes every vehicle
+eventually has a match and never reports "new".
+
+**Long-run state eviction.** Every heartbeat (~5s, on wall-clock so it runs even when frames
+stall), `evict_stale_state` prunes by timestamp: gallery entries older than `MAX_TRAVEL_TIME`
+(10s — past that they can never satisfy the travel-time gate again) and locks older than
+`LOCK_TTL` (= `MAX_TRAVEL_TIME`; a lock is stamped at match time, strictly *after* its
+gallery entry, so it always outlives the entry it guards — no premature re-match). This keeps
+`gallery_db`, `locked_cam1_ids`, and `locked_cam2_map` bounded over continuous or repeated
+demo sessions instead of growing forever, frees cam1 ids for reuse on replay, and — since the
+per-frame gallery scan only ever sees the still-active window — keeps that O(N) scan cheap.
+This mirrors cam3's gallery eviction (below), extended to cam2's lock tables.
 
 ### cam3 — best-shot matcher on a joining road
 
@@ -263,7 +275,8 @@ using its best image. This is the "best-shot buffering" idea:
 
 cam3 also prunes its gallery: roughly every 50 inserts it drops entries older than
 `MAX_TRAVEL_TIME`, since a cam1 vehicle that old can no longer be a valid cam3 match. cam2
-doesn't bother — its gate is much shorter.
+applies the same timestamp-based policy (see "Long-run state eviction" above), and extends it
+to its lock tables as well.
 
 The new-vehicle events are what populate the second pane of the visualizer; a later cam3
 match for the same source vehicle overrides them.

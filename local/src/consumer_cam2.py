@@ -27,6 +27,27 @@ MIN_TRAVEL_TIME = 1.0
 MAX_TRAVEL_TIME = 10
 HEARTBEAT_SEC = 5.0
 
+# Long-run state eviction: a gallery entry older than MAX_TRAVEL_TIME can never
+# satisfy the travel-time gate again, so it is dead weight (same policy as Cam 3).
+# Locks live a bit longer (LOCK_TTL >= MAX_TRAVEL_TIME) so a lock always outlives
+# the gallery entry it guards -> no premature re-match -- while still being freed
+# on long runs / replays so IDs can be reused instead of leaking forever.
+LOCK_TTL = MAX_TRAVEL_TIME
+
+
+def evict_stale_state(gallery_db, locked_cam1_ids, locked_cam2_map, now):
+    """Drop gallery entries and ID locks past their TTL (timestamp-based).
+
+    Mirrors Cam 3's gallery eviction and extends the same idea to the lock
+    tables, keeping memory bounded and the per-frame gallery scan small during
+    extended / repeated runs."""
+    for k in [k for k, v in gallery_db.items() if now - v['ts'] > MAX_TRAVEL_TIME]:
+        del gallery_db[k]
+    for k in [k for k, ts in locked_cam1_ids.items() if now - ts > LOCK_TTL]:
+        del locked_cam1_ids[k]
+    for k in [k for k, v in locked_cam2_map.items() if now - v['ts'] > LOCK_TTL]:
+        del locked_cam2_map[k]
+
 
 def run_cam2():
     log.info("Init YOLO", extra={"event": "yolo_init", "weights": YOLO_MODEL})
@@ -54,8 +75,8 @@ def run_cam2():
     box_an = sv.BoxAnnotator(thickness=2)
 
     gallery_db = {}
-    locked_cam1_ids = set()
-    locked_cam2_map = {}  # {cam2_id: cam1_id}
+    locked_cam1_ids = {}  # {cam1_id: lock_ts} -- timestamped so stale locks can be evicted
+    locked_cam2_map = {}  # {cam2_id: {'cam1_id': int, 'ts': lock_ts}}
 
     frame_count = 0
     match_count = 0
@@ -74,9 +95,14 @@ def run_cam2():
                 fps = (frame_count - hb_frame_mark) / (now - last_hb)
                 log.info("Cam2 stats", extra={"event": "heartbeat", "fps": round(fps, 1),
                                               "frames": frame_count, "matches": match_count,
-                                              "gallery_size": len(gallery_db)})
+                                              "gallery_size": len(gallery_db),
+                                              "locks": len(locked_cam2_map)})
                 last_hb = now
                 hb_frame_mark = frame_count
+                # Periodic, frame-rate-independent sweep: keeps gallery_db and the
+                # lock tables bounded on long / looping runs (also bounds the O(N)
+                # gallery scan below to the active window).
+                evict_stale_state(gallery_db, locked_cam1_ids, locked_cam2_map, now)
 
             msg = consumer.poll(0.02)
             if msg is None:
@@ -88,7 +114,7 @@ def run_cam2():
             if msg.topic() == TOPIC_GALLERY:
                 try:
                     data = json.loads(msg.value().decode())
-                    # Cam2 never deletes from the DB, only updates
+                    # Insert/refresh; stale entries are pruned by evict_stale_state()
                     gallery_db[data['track_id']] = {
                         'feat': np.array(data['feature'], dtype=np.float32),
                         'ts': data['timestamp'],
@@ -174,9 +200,9 @@ def run_cam2():
                                 if score > SIMILARITY_THRESHOLD and matched_c1_id not in locked_cam1_ids:
                                     c2_tid = int(detections.tracker_id[query_indices[q_idx]])
 
-                                    # Lock
-                                    locked_cam1_ids.add(matched_c1_id)
-                                    locked_cam2_map[c2_tid] = matched_c1_id
+                                    # Lock (timestamped so it can be evicted later)
+                                    locked_cam1_ids[matched_c1_id] = ts_now
+                                    locked_cam2_map[c2_tid] = {'cam1_id': matched_c1_id, 'ts': ts_now}
 
                                     # Send event (cam_source="cam2")
                                     evt = {
@@ -205,7 +231,7 @@ def run_cam2():
                         tid = int(tid)
                         x1, y1 = int(xyxy[0]), int(xyxy[1])
                         if tid in locked_cam2_map:
-                            cv2.putText(frame, f"ID_C1: {locked_cam2_map[tid]}", (x1, y1 - 10),
+                            cv2.putText(frame, f"ID_C1: {locked_cam2_map[tid]['cam1_id']}", (x1, y1 - 10),
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
                             cv2.rectangle(frame, (x1, y1), (int(xyxy[2]), int(xyxy[3])), (0, 255, 0), 2)
 
