@@ -127,15 +127,23 @@ def run_cam3():
                 ts_now = time.time()
                 kafka_frame_idx = frame_count
                 try:
-                    meta = json.loads(msg.headers()[0][1].decode())
-                    kafka_frame_idx = meta.get('frame_idx', frame_count) + 1
-                    ts_now = meta.get('timestamp', ts_now)
+                    # Guard: error/malformed messages may carry no headers (headers() is None)
+                    if msg.headers():
+                        meta = json.loads(msg.headers()[0][1].decode())
+                        kafka_frame_idx = meta.get('frame_idx', frame_count) + 1
+                        ts_now = meta.get('timestamp', ts_now)
                 except (json.JSONDecodeError, IndexError, AttributeError):
                     log.debug("Could not read meta header", extra={"event": "meta_fallback"})
 
                 # 1. Detect & track
                 if frame_count % 3 == 0:
-                    results = model(frame, verbose=False, conf=0.5)[0]
+                    # Isolate inference: a corrupt frame or CUDA OOM skips this frame, not the run
+                    try:
+                        results = model(frame, verbose=False, conf=0.5)[0]
+                    except Exception:
+                        log.error("YOLO inference failed, skipping frame", exc_info=True,
+                                  extra={"event": "inference_error", "frame": frame_count})
+                        continue
                     detections = sv.Detections.from_ultralytics(results)
                     detections = utils.merge_truck_boxes(detections, frame.shape)
                     detections = tracker.update_with_detections(detections)
@@ -200,7 +208,13 @@ def run_cam3():
                     if finished_tracks:
                         # Batch extract features once for speed
                         crops_to_process = [info['crop'] for _, info in finished_tracks]
-                        q_feats = extractor.extract_batch(crops_to_process)
+                        try:
+                            q_feats = extractor.extract_batch(crops_to_process)
+                        except Exception:
+                            # Skip this frame; finished tracks stay buffered and retry next pass
+                            log.error("Feature extraction failed, skipping finished tracks", exc_info=True,
+                                      extra={"event": "extract_error", "frame": frame_count})
+                            continue
 
                         # Build the valid gallery list
                         valid_items, valid_ids = [], []
@@ -245,7 +259,12 @@ def run_cam3():
                                         "match_b64": img_b64,
                                         "is_new": False
                                     }
-                                    producer.produce(TOPIC_MATCH, json.dumps(evt).encode())
+                                    try:
+                                        producer.produce(TOPIC_MATCH, json.dumps(evt).encode())
+                                    except BufferError:
+                                        log.debug("Kafka buffer full, dropping match msg",
+                                                  extra={"event": "buffer_full"})
+                                        producer.poll(0.1)
                                     match_count += 1
                                     log.info("Match cam3 <-> cam1",
                                              extra={"event": "match", "cam3_id": c3_tid,
@@ -262,7 +281,12 @@ def run_cam3():
                                     "match_b64": img_b64,
                                     "is_new": True
                                 }
-                                producer.produce(TOPIC_MATCH, json.dumps(evt).encode())
+                                try:
+                                    producer.produce(TOPIC_MATCH, json.dumps(evt).encode())
+                                except BufferError:
+                                    log.debug("Kafka buffer full, dropping new-vehicle msg",
+                                              extra={"event": "buffer_full"})
+                                    producer.poll(0.1)
                                 new_count += 1
                                 log.info("New vehicle at cam3 (no match)",
                                          extra={"event": "new_vehicle", "cam3_id": c3_tid})
@@ -291,6 +315,7 @@ def run_cam3():
         log.info("Ctrl-C received, stopping cam3", extra={"event": "shutdown"})
     finally:
         consumer.close()
+        producer.flush(timeout=5.0)  # deliver any queued match/new-vehicle events before exit
         res_writer.close()
         gui.destroyAllWindows()
         log.info("Cam3 exited", extra={"event": "exit", "frames": frame_count,

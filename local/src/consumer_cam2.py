@@ -117,7 +117,13 @@ def run_cam2():
                     log.debug("Could not read meta header", extra={"event": "meta_fallback"})
 
                 if frame_count % 3 == 0:
-                    results = model(frame, verbose=False, conf=0.5)[0]
+                    # Isolate inference: a corrupt frame or CUDA OOM skips this frame, not the run
+                    try:
+                        results = model(frame, verbose=False, conf=0.5)[0]
+                    except Exception:
+                        log.error("YOLO inference failed, skipping frame", exc_info=True,
+                                  extra={"event": "inference_error", "frame": frame_count})
+                        continue
                     detections = sv.Detections.from_ultralytics(results)
                     detections = utils.merge_truck_boxes(detections, frame.shape)
                     detections = tracker.update_with_detections(detections)
@@ -141,7 +147,12 @@ def run_cam2():
                         query_indices.append(i)
 
                     if query_crops and gallery_db:
-                        q_feats = extractor.extract_batch(query_crops)
+                        try:
+                            q_feats = extractor.extract_batch(query_crops)
+                        except Exception:
+                            log.error("Feature extraction failed, skipping frame", exc_info=True,
+                                      extra={"event": "extract_error", "frame": frame_count})
+                            continue
 
                         # Filter the gallery
                         valid_items, valid_ids = [], []
@@ -177,7 +188,12 @@ def run_cam2():
                                         "cam1_b64": gallery_db[matched_c1_id]['img_b64'],
                                         "match_b64": utils.encode_image_base64(query_crops[q_idx])
                                     }
-                                    producer.produce(TOPIC_MATCH, json.dumps(evt).encode())
+                                    try:
+                                        producer.produce(TOPIC_MATCH, json.dumps(evt).encode())
+                                    except BufferError:
+                                        log.debug("Kafka buffer full, dropping match msg",
+                                                  extra={"event": "buffer_full"})
+                                        producer.poll(0.1)
                                     match_count += 1
                                     log.info("Match cam2 <-> cam1",
                                              extra={"event": "match", "cam2_id": c2_tid,
@@ -200,6 +216,7 @@ def run_cam2():
         log.info("Ctrl-C received, stopping cam2", extra={"event": "shutdown"})
     finally:
         consumer.close()
+        producer.flush(timeout=5.0)  # deliver any queued match events before exit
         res_writer.close()
         gui.destroyAllWindows()
         log.info("Cam2 exited", extra={"event": "exit", "frames": frame_count, "matches": match_count})

@@ -173,6 +173,13 @@ never reach the JSONL logger (an uncaught exception, or a native CUDA/Qt abort).
 fire on wall-clock time, so a frame-starved consumer still beats with `fps=0` rather than
 looking dead — handy when diagnosing whether a component crashed or just got no data.
 
+The consumers also **degrade instead of dying** on the common transient faults:
+per-frame YOLO/OSNet inference is wrapped so a corrupt frame or a CUDA OOM (the 4 GB GPU)
+just skips that frame (`event=inference_error` / `extract_error`) and keeps going; every
+`producer.produce` tolerates a full local queue (`event=buffer_full`); and each consumer
+`producer.flush()`es on shutdown so the last match/gallery events are delivered, not lost.
+Grep these events in the JSONL to see whether a run hit GPU pressure or Kafka backpressure.
+
 ## Evaluate against ground truth
 
 ```bash

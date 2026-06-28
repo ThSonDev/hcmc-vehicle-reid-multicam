@@ -292,3 +292,32 @@ sets `auto.offset.reset=latest` (read only new frames) and a 10s
 `topic.metadata.refresh.interval.ms` as a backstop, so a lazily-created topic is discovered
 in ~10s instead of librdkafka's 5-minute default — defence in depth behind `run.py`'s
 topic pre-creation.
+
+### Staying alive: per-frame fault isolation
+
+A streaming consumer should survive a single bad frame, a momentary GPU hiccup, or a brief
+Kafka stall without taking the whole pipeline down — the orchestrator's crash capture is a
+safety net, not the first line of defence. Each consumer therefore contains its failures at
+the granularity of one frame or one message:
+
+- **Inference is wrapped per frame.** The YOLO call and the OSNet `extract_batch` call each
+  sit in their own `try/except`. On the 4 GB GPU a CUDA out-of-memory is a real possibility,
+  and an occasional decoded frame can be malformed; either way the consumer logs the failure
+  (`event=inference_error` / `extract_error`) and **skips just that frame**, then carries on
+  with the next one instead of crashing. For cam3 a failed extraction leaves the finished
+  tracks in the buffer, so they are simply retried on the next pass.
+- **Sends tolerate a full queue.** Every `producer.produce` is wrapped in
+  `except BufferError` (the same pattern the producer uses): if the local librdkafka queue
+  is momentarily full it logs `event=buffer_full`, polls briefly to let the queue drain, and
+  moves on rather than aborting. cam1 additionally retries the dropped gallery send on the
+  next interval; the low-volume match/new-vehicle events are simply skipped.
+- **Headers are read defensively.** All three cameras now guard `if msg.headers():` before
+  decoding the `meta` header, so an error or header-less message can't raise on `None[0]` and
+  kill the loop — it just falls back to the local clock.
+- **Producers flush on shutdown.** Each consumer calls `producer.flush(timeout=5.0)` in its
+  `finally` block, so match events and gallery embeddings still queued at Ctrl-C (or at the
+  end of a `--once` pass) are delivered before the process exits instead of being lost.
+
+The net effect is that transient GPU pressure or Kafka backpressure shows up as a few
+skipped frames in the logs — visible by grepping the events above — rather than a dead
+component and a half-empty run.

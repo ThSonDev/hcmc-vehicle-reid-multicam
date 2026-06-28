@@ -127,7 +127,13 @@ def run_cam1():
             detections_display = None
 
             if frame_count % (SKIP_FRAMES + 1) == 0:
-                results = model(frame, verbose=False, conf=YOLO_CONF)[0]
+                # Isolate inference: a corrupt frame or CUDA OOM skips this frame, not the run
+                try:
+                    results = model(frame, verbose=False, conf=YOLO_CONF)[0]
+                except Exception:
+                    log.error("YOLO inference failed, skipping frame", exc_info=True,
+                              extra={"event": "inference_error", "frame": frame_count})
+                    continue
                 detections = sv.Detections.from_ultralytics(results)
 
                 # Use the helper from utils
@@ -156,7 +162,12 @@ def run_cam1():
 
                 if crops:
                     # Call extract on the extractor instance
-                    embeddings = extractor.extract_batch(crops)
+                    try:
+                        embeddings = extractor.extract_batch(crops)
+                    except Exception:
+                        log.error("Feature extraction failed, skipping frame", exc_info=True,
+                                  extra={"event": "extract_error", "frame": frame_count})
+                        continue
 
                     for idx, feat_vec in zip(valid_indices, embeddings):
                         tid = int(detections.tracker_id[idx])
@@ -172,11 +183,18 @@ def run_cam1():
                                 "image_b64": utils.encode_image_base64(crops[valid_indices.index(idx)])
                             }
 
-                            producer.produce(
-                                TOPIC_GALLERY,
-                                key=str(tid).encode(),
-                                value=json.dumps(payload).encode()
-                            )
+                            try:
+                                producer.produce(
+                                    TOPIC_GALLERY,
+                                    key=str(tid).encode(),
+                                    value=json.dumps(payload).encode()
+                                )
+                            except BufferError:
+                                # Queue full: drop this send, retry the track next interval
+                                log.debug("Kafka buffer full, dropping gallery msg",
+                                          extra={"event": "buffer_full", "track_id": tid})
+                                producer.poll(0.1)
+                                continue
                             cam1_last_sent[tid] = ts_now
                             sent_count += 1
                             log.debug("Gallery sent", extra={"event": "gallery_send", "track_id": tid})
@@ -195,6 +213,7 @@ def run_cam1():
         log.info("Ctrl-C received, stopping cam1", extra={"event": "shutdown"})
     finally:
         consumer.close()
+        producer.flush(timeout=5.0)  # deliver any queued gallery embeddings before exit
         res_writer.close()
         gui.destroyAllWindows()
         log.info("Cam1 exited", extra={"event": "exit", "frames": frame_count, "gallery_sent": sent_count})
