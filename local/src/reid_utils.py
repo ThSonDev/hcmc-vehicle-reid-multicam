@@ -207,7 +207,8 @@ class MOTResultWriter:
         # MOT format: frame, id, left, top, w, h, conf, -1, -1, -1
         line = f"{int(frame_idx)},{int(track_id)},{x1:.2f},{y1:.2f},{w:.2f},{h:.2f},{conf:.2f},-1,-1,-1\n"
         self.file.write(line)
-        self.file.flush()  # write immediately
+        # No per-line flush: rely on buffered I/O (flushed on close) to cut
+        # disk writes / SSD wear. Results land on disk at consumer shutdown.
 
     def close(self):
         self.file.close()

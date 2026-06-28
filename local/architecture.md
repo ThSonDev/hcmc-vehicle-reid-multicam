@@ -268,10 +268,11 @@ using its best image. This is the "best-shot buffering" idea:
 3. **Match the finished tracks, once.** Their best crops are embedded in one batch and
    compared against the travel-time-filtered, unlocked gallery, exactly like cam2. If the
    best score clears `SIMILARITY_THRESHOLD` (0.5, lower than cam2's because the cam1→cam3
-   gap and viewpoint make matching harder) it emits a match event (`is_new=False`) and locks
-   the cam1 id. If nothing clears the bar, it emits a **new-vehicle** event (`is_new=True`)
-   with no `cam1_id`. Either way the track id goes into `processed_cam3_ids` so flicker (the
-   same id reappearing) doesn't reprocess it.
+   gap and viewpoint make matching harder) it emits a match event (`is_new=False`, carrying
+   the matched `cam1_b64` source image like cam2) and locks the cam1 id. If nothing clears the
+   bar, it emits a **new-vehicle** event (`is_new=True`) with no `cam1_id`. Either way the
+   track id goes into `processed_cam3_ids` so flicker (the same id reappearing) doesn't
+   reprocess it.
 
 cam3 also prunes its gallery: roughly every 50 inserts it drops entries older than
 `MAX_TRAVEL_TIME`, since a cam1 vehicle that old can no longer be a valid cam3 match. cam2
@@ -294,10 +295,12 @@ Beyond `merge_truck_boxes`, two classes carry most of the shared consumer logic:
   are cosine similarities. It takes a `logger=` so its messages land in the calling
   consumer's log instead of opening its own file.
 - **`MOTResultWriter`** writes one MOT-format line per tracked box
-  (`frame,id,left,top,w,h,conf,…`) to `results/res_cam*.txt`, flushing each line. It can
-  rescale boxes from stream resolution to GT resolution, but in this pipeline every camera
-  passes `target_width=None`, so results are written in 640 coordinates and the res→GT
-  scaling happens later at evaluation time (see the resolution discussion above).
+  (`frame,id,left,top,w,h,conf,…`) to `results/res_cam*.txt` using buffered I/O (no per-line
+  flush — lines land on disk when the OS flushes or the writer is `close()`d in the consumer's
+  `finally`, cutting disk writes / SSD wear). It can rescale boxes from stream resolution to GT
+  resolution, but in this pipeline every camera passes `target_width=None`, so results are
+  written in 640 coordinates and the res→GT scaling happens later at evaluation time (see the
+  resolution discussion above).
 
 The Kafka helpers (`get_kafka_consumer` / `get_kafka_producer`) and the base64 image
 codecs (`encode_image_base64` / `decode_image_base64`) also live here. The consumer config

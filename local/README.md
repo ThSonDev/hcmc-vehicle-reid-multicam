@@ -177,7 +177,10 @@ The consumers also **degrade instead of dying** on the common transient faults:
 per-frame YOLO/OSNet inference is wrapped so a corrupt frame or a CUDA OOM (the 4 GB GPU)
 just skips that frame (`event=inference_error` / `extract_error`) and keeps going; every
 `producer.produce` tolerates a full local queue (`event=buffer_full`); and each consumer
-`producer.flush()`es on shutdown so the last match/gallery events are delivered, not lost.
+`producer.flush()`es and `res_writer.close()`s on shutdown so the last match/gallery events
+are delivered and the buffered `results/res_cam*.txt` lines are flushed to disk, not lost.
+(`MOTResultWriter` no longer flushes per line — it relies on buffered I/O flushed at close,
+to cut disk writes / SSD wear; run `--once` for a clean shutdown before `report.py --eval`.)
 Grep these events in the JSONL to see whether a run hit GPU pressure or Kafka backpressure.
 
 ## Evaluate against ground truth

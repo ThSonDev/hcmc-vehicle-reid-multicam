@@ -256,6 +256,7 @@ def run_cam3():
                                         "match_id": c3_tid,
                                         "score": float(score),
                                         "timestamp": info['ts'],  # use the best-shot timestamp
+                                        "cam1_b64": gallery_db[matched_c1_id]['img_b64'],
                                         "match_b64": img_b64,
                                         "is_new": False
                                     }
